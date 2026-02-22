@@ -91,7 +91,8 @@ export function computeStats(chartData, tickers, transactions, assetNames, asset
 
   const last = chartData[chartData.length - 1];
   const stats = [];
-  let totalNetInvested = 0;
+  let totalDeposits = 0;
+  let totalWithdrawals = 0;
 
   tickers.forEach((ticker) => {
     const fv = last[ticker];
@@ -99,11 +100,24 @@ export function computeStats(chartData, tickers, transactions, assetNames, asset
     if (!firstPoint || fv == null) return;
 
     const tickerTxs = transactions.filter((tx) => tx.ticker === ticker);
-    const netInvested = tickerTxs.reduce(
-      (s, tx) => s + (tx.type === 'buy' ? tx.amount : -tx.amount),
-      0,
-    );
-    totalNetInvested += Math.max(0, netInvested);
+    
+    // Calculate deposits (buys) and withdrawals (sells)
+    let deposits = 0;
+    let withdrawals = 0;
+    
+    tickerTxs.forEach((tx) => {
+      if (tx.type === 'buy') {
+        deposits += tx.amount;
+      } else {
+        withdrawals += tx.amount;
+      }
+    });
+    
+    totalDeposits += deposits;
+    totalWithdrawals += withdrawals;
+    
+    // For return calculation, use deposits
+    const netInvested = deposits;
 
     const days =
       (new Date(last.date) - new Date(firstPoint.date)) / (1000 * 60 * 60 * 24);
@@ -129,7 +143,8 @@ export function computeStats(chartData, tickers, transactions, assetNames, asset
       annualizedReturn: annualized,
       maxDrawdown: maxDD,
       color: assetColors[ticker] || '#94a3b8',
-      netInvested: Math.max(0, netInvested),
+      totalDeposits: deposits,
+      totalWithdrawals: withdrawals,
     });
   });
 
@@ -155,14 +170,15 @@ export function computeStats(chartData, tickers, transactions, assetNames, asset
       name: 'Total Portfolio',
       ticker: null,
       finalValue: pfv,
-      totalReturn: totalNetInvested > 0 ? (pfv - totalNetInvested) / totalNetInvested : 0,
+      totalReturn: totalDeposits > 0 ? (pfv + totalWithdrawals - totalDeposits) / totalDeposits : 0,
       annualizedReturn:
-        days > 0 && totalNetInvested > 0
-          ? Math.pow(pfv / totalNetInvested, 365.25 / days) - 1
+        days > 0 && totalDeposits > 0
+          ? Math.pow((pfv + totalWithdrawals) / totalDeposits, 365.25 / days) - 1
           : 0,
       maxDrawdown: maxDD,
       color: '#1e293b',
-      netInvested: totalNetInvested,
+      totalDeposits,
+      totalWithdrawals,
       isPortfolio: true,
     });
   }
