@@ -9,7 +9,7 @@ import {
   History, Zap, CheckCircle2, X,
   PanelLeftClose, PanelLeftOpen,
   ShoppingCart, TrendingDown, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
-  LogIn, LogOut, Cloud,
+  LogIn, LogOut, Cloud, Github, Heart, Moon, Sun,
 } from 'lucide-react';
 import { searchTickers, fetchPrices } from './api';
 import { simulate, computeStats } from './simulation';
@@ -141,6 +141,9 @@ const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [hiddenSeries, setHiddenSeries] = useState(new Set());
   const [showMarkers, setShowMarkers] = useState(true);
+  const [dark, setDark] = useState(() => {
+    try { return localStorage.getItem('investo-dark') === 'true'; } catch { return false; }
+  });
 
   // --- Modal ---
   const [modalMode, setModalMode] = useState(null);           // 'buy' | 'sell' | 'edit' | 'import' | null
@@ -665,26 +668,30 @@ const App = () => {
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
+  const toggleDark = useCallback(() => {
+    setDark((v) => { const next = !v; localStorage.setItem('investo-dark', next); return next; });
+  }, []);
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-4 md:p-8">
+    <div className={`min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8${dark ? ' dark' : ''}`}>
       <div className="max-w-7xl mx-auto space-y-8">
 
         {/* Header */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-200">
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-800 p-6 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700">
           <div className="flex items-center gap-4">
             <button
               onClick={() => setSidebarOpen((v) => !v)}
-              className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 transition-all"
+              className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 transition-all"
               title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
             >
               {sidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />}
             </button>
-            <div className="bg-blue-600 p-3 rounded-2xl shadow-lg shadow-blue-200">
+            <div className="bg-blue-600 p-3 rounded-2xl shadow-lg shadow-blue-200 dark:shadow-blue-900">
               <BarChart3 className="text-white w-8 h-8" />
             </div>
             <div>
-              <h1 className="text-2xl font-black tracking-tight text-slate-800 uppercase">Investo</h1>
-              <span className="bg-emerald-50 text-emerald-700 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 uppercase tracking-wider w-fit mt-0.5">
+              <h1 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">Investo</h1>
+              <span className="bg-emerald-50 dark:bg-emerald-950 text-emerald-700 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 uppercase tracking-wider w-fit mt-0.5">
                 <Zap className="w-2 h-2 fill-current" /> Real Market Data
               </span>
             </div>
@@ -710,15 +717,18 @@ const App = () => {
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Balance</p>
                     <p className={`text-lg font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(currentBalance)}</p>
                   </div>
-                  <span className={`text-xs font-black px-2 py-1 rounded-lg ${isPositive ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</span>
+                  <span className={`text-xs font-black px-2 py-1 rounded-lg ${isPositive ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-600' : 'bg-rose-50 dark:bg-rose-950 text-rose-600'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</span>
                 </>
                 )}
               </div>
               );
             })()}
           </div>
-          {/* Auth */}
+          {/* Auth + Theme */}
           <div className="flex items-center gap-2">
+            <button onClick={toggleDark} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-500 dark:text-slate-400 transition-all" title={dark ? 'Light mode' : 'Dark mode'}>
+              {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
             {isSyncing && <Cloud className="w-4 h-4 text-blue-400 animate-pulse" />}
             {user ? (
               <div className="flex items-center gap-2">
@@ -729,12 +739,12 @@ const App = () => {
                     {user.name?.[0]?.toUpperCase()}
                   </div>
                 )}
-                <button onClick={signOut} className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 transition-all" title="Sign out">
+                <button onClick={signOut} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 transition-all" title="Sign out">
                   <LogOut className="w-4 h-4" />
                 </button>
               </div>
             ) : supabase ? (
-              <button onClick={signInWithGoogle} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs transition-all">
+              <button onClick={signInWithGoogle} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 font-bold text-xs transition-all">
                 <LogIn className="w-4 h-4" /> Sign in
               </button>
             ) : null}
@@ -758,7 +768,7 @@ const App = () => {
                 onKeyDown={(e) => e.key === 'Enter' && quickAddText.trim() && handleQuickAdd()}
                 placeholder='"bought google 1/1/2025 $1000"'
                 disabled={quickAddStatus === 'processing'}
-                className="w-full bg-white border border-slate-200 rounded-2xl py-3 pl-10 pr-12 text-sm font-medium focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none shadow-sm transition-all placeholder:text-slate-300 disabled:opacity-60"
+className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-3 pl-10 pr-12 text-sm font-medium focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none shadow-sm transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600 disabled:opacity-60"
               />
               <button
                 onClick={() => setQuickAddVerify((v) => !v)}
@@ -771,7 +781,7 @@ const App = () => {
               </button>
             </div>
             {quickAddPreview && (
-              <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${quickAddPreview.type === 'buy' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
+              <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${quickAddPreview.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-200 text-emerald-700' : 'bg-rose-50 dark:bg-rose-950 border-rose-200 text-rose-700'}`}>
                 <span className="uppercase text-[10px] font-black w-8">{quickAddPreview.type}</span>
                 <span className="flex-1 truncate">{quickAddPreview.name} ({quickAddPreview.ticker})</span>
                 <span>{formatCurrency(quickAddPreview.amount)}</span>
@@ -785,7 +795,7 @@ const App = () => {
               </div>
             )}
             {quickAddStatus && quickAddStatus.startsWith('error') && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold bg-rose-50 text-rose-700">
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold bg-rose-50 dark:bg-rose-950 text-rose-700">
                 <AlertCircle className="w-3 h-3 shrink-0" />
                 {quickAddStatus.split(':').slice(1).join(':')}
               </div>
@@ -885,11 +895,11 @@ const App = () => {
             )}
             <div className="grid grid-cols-2 gap-3">
               <button onClick={() => { setImportText(''); setModalMode('import'); }}
-                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95">
+                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 active:scale-95">
                 <Upload className="w-3.5 h-3.5" /> Import
               </button>
               <button onClick={exportCSV} disabled={transactions.length === 0}
-                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-40 active:scale-95">
+                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40 active:scale-95">
                 <Download className="w-3.5 h-3.5" /> Export
               </button>
             </div>
@@ -900,16 +910,16 @@ const App = () => {
           <main className={`${sidebarOpen ? 'lg:col-span-8' : 'lg:col-span-12'} space-y-8`}>
 
             {/* Chart */}
-            <div className="bg-white p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-slate-200 h-[550px] flex flex-col overflow-hidden relative">
+            <div className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 h-[550px] flex flex-col overflow-hidden relative">
               <div className="flex justify-between items-start mb-8 relative z-10">
                 <div>
-                  <h2 className="text-2xl font-black tracking-tight text-slate-800 uppercase">Portfolio Performance</h2>
+                  <h2 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">Portfolio Performance</h2>
                   <p className="text-sm text-slate-400 italic font-medium">Historical data from Yahoo Finance</p>
                 </div>
                 {chartData.length > 0 && transactions.length > 0 && (
                   <button
                     onClick={() => setShowMarkers((v) => !v)}
-                    className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${showMarkers ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'}`}
+                    className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
                   >
                     {showMarkers ? '● Markers On' : '○ Markers Off'}
                   </button>
@@ -923,18 +933,18 @@ const App = () => {
                   </div>
                 ) : chartData.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
-                    <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center shadow-inner">
+                    <div className="w-20 h-20 bg-slate-50 dark:bg-slate-700 rounded-full flex items-center justify-center shadow-inner">
                       <BarChart3 className="w-10 h-10 text-slate-300" />
                     </div>
                     <div className="text-center">
-                      <p className="font-black text-slate-800 text-lg uppercase tracking-tight">No Data Yet</p>
+                      <p className="font-black text-slate-800 dark:text-slate-100 text-lg uppercase tracking-tight">No Data Yet</p>
                       <p className="text-sm">Buy assets to start simulating</p>
                     </div>
                   </div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="5 5" vertical={false} stroke="#f1f5f9" />
+                      <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
                       <XAxis
                         dataKey="date"
                         tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
@@ -947,14 +957,14 @@ const App = () => {
                         tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                       />
                       <Tooltip
-                        contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.15)', padding: '20px' }}
+                        contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
                         itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
                         formatter={(v, n) => [formatCurrency(v), n]}
                         labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })}
                       />
-                      <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }} onClick={handleLegendClick} />
+                      <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', color: dark ? '#94a3b8' : undefined }} onClick={handleLegendClick} />
                       {chartTickers.length > 1 && (
-<Line type="monotone" dataKey="Total Portfolio" stroke="#0f172a" strokeWidth={3} dot={false} hide={hiddenSeries.has('Total Portfolio')} />
+<Line type="monotone" dataKey="Total Portfolio" stroke={dark ? '#e2e8f0' : '#0f172a'} strokeWidth={3} dot={false} hide={hiddenSeries.has('Total Portfolio')} />
                       )}
                       {chartTickers.map((ticker) => {
                         const asset = selectedAssets[ticker];
@@ -996,7 +1006,7 @@ const App = () => {
                           y={m.value}
                           r={4}
                           fill={m.type === 'buy' ? '#10b981' : '#ef4444'}
-                          stroke="#0f172a"
+                          stroke={dark ? '#e2e8f0' : '#0f172a'}
                           strokeWidth={2}
                           isFront
                         />
@@ -1043,9 +1053,9 @@ const App = () => {
                   {assets.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                       {assets.map((stat, idx) => (
-                        <div key={idx} className="p-6 rounded-[2rem] border bg-white border-slate-200 shadow-sm transition-all hover:translate-y-[-4px]">
+                        <div key={idx} className="p-6 rounded-[2rem] border bg-white dark:bg-slate-800 border-slate-200 shadow-sm transition-all hover:translate-y-[-4px]">
                           <div className="flex justify-between items-start mb-4">
-                            <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-500">
+                            <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
                               {stat.ticker}
                             </div>
                             <div className={`flex items-center gap-1 text-xs font-black ${stat.totalReturn >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -1053,7 +1063,7 @@ const App = () => {
                               {formatPercent(stat.totalReturn)}
                             </div>
                           </div>
-                          <h4 className="text-xs font-bold mb-1 truncate text-slate-500">
+                          <h4 className="text-xs font-bold mb-1 truncate text-slate-500 dark:text-slate-400">
                             {stat.name} · {formatCurrency(stat.netInvested)}
                           </h4>
                           <p className="text-2xl font-black tracking-tight">{formatCurrency(stat.finalValue)}</p>
@@ -1071,15 +1081,15 @@ const App = () => {
 
             {/* Summary Table */}
             {stats.length > 0 && (
-              <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-200 overflow-hidden">
-                <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/20">
-                  <h2 className="text-xl font-black tracking-tight text-slate-800 flex items-center gap-2 uppercase">
+              <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+                <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/20 dark:bg-slate-800/20">
+                  <h2 className="text-xl font-black tracking-tight text-slate-800 dark:text-slate-100 flex items-center gap-2 uppercase">
                     <History className="w-5 h-5 text-slate-400" /> Summary
                   </h2>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left min-w-[700px]">
-                    <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest bg-slate-50/50">
+                    <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest bg-slate-50/50 dark:bg-slate-800/50">
                       <tr>
                         <th className="px-8 py-4">Asset</th>
                         <th className="px-8 py-4 text-right">Net Invested</th>
@@ -1089,9 +1099,9 @@ const App = () => {
                         <th className="px-8 py-4 text-right">Max DD</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                       {stats.filter((s) => !s.isPortfolio).map((stat, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                        <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                           <td className="px-8 py-6">
                             <div className="flex items-center gap-4">
                               <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: stat.color }} />
@@ -1105,7 +1115,7 @@ const App = () => {
                               {stat.totalReturn >= 0 ? '+' : ''}{formatPercent(stat.totalReturn)}
                             </span>
                           </td>
-                          <td className="px-8 py-6 text-right font-bold text-sm text-slate-500">{formatPercent(stat.annualizedReturn)}</td>
+                          <td className="px-8 py-6 text-right font-bold text-sm text-slate-500 dark:text-slate-400">{formatPercent(stat.annualizedReturn)}</td>
                           <td className="px-8 py-6 text-right font-bold text-sm text-rose-500">{formatPercent(stat.maxDrawdown)}</td>
                         </tr>
                       ))}
@@ -1136,19 +1146,19 @@ const App = () => {
       {/* ── Buy Modal ────────────────────────────────────────────────────── */}
       {modalMode === 'buy' && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4 max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4 max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-600 flex items-center gap-2">
                 <ShoppingCart className="w-4 h-4" /> Buy Asset
               </h3>
-              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 p-1">
+              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 dark:text-slate-300 p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {stagedAsset ? (
               <div className="space-y-4">
-                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-100">
+                <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950 border border-emerald-100 dark:border-emerald-900">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] bg-emerald-500">
                       {stagedAsset.symbol.slice(0, 3)}
@@ -1165,17 +1175,17 @@ const App = () => {
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
                       <input type="number" value={modalAmount} onChange={(e) => setModalAmount(Math.max(0, Number(e.target.value)))}
-                        className="w-full bg-slate-100 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-emerald-500 outline-none" />
+                        className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-emerald-500 outline-none" />
                     </div>
                   </div>
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Buy Date</label>
                     <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
-                      className="w-full bg-slate-100 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 focus:ring-2 focus:ring-emerald-500 outline-none" />
+                      className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" />
                   </div>
                 </div>
                 <div className="flex gap-3 pt-2">
-                  <button onClick={() => setStagedAsset(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">Back</button>
+                  <button onClick={() => setStagedAsset(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Back</button>
                   <button onClick={() => { addBuy(stagedAsset.symbol, stagedAsset.name); closeModal(); }}
                     className="flex-1 py-3 rounded-2xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg transition-all active:scale-95">
                     Buy
@@ -1188,18 +1198,18 @@ const App = () => {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input type="text" placeholder="Search (Google, BTC, Amazon)..." value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)} autoFocus
-                    className="w-full bg-slate-100 border-none rounded-xl py-3.5 pl-10 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 outline-none shadow-inner transition-all" />
+                    className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3.5 pl-10 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 outline-none shadow-inner transition-all" />
                   {isSearching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 animate-spin" />}
                 </div>
                 <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar pb-2">
                   {isSearching && (
                     <div className="space-y-3">
                       {[1, 2, 3].map((i) => (
-                        <div key={i} className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-slate-200 animate-pulse" />
+                        <div key={i} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-800 flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-slate-200 dark:bg-slate-600 animate-pulse" />
                           <div className="flex-1 space-y-2">
-                            <div className="h-3 w-2/3 bg-slate-200 rounded animate-pulse" />
-                            <div className="h-2 w-1/2 bg-slate-100 rounded animate-pulse" />
+                            <div className="h-3 w-2/3 bg-slate-200 dark:bg-slate-600 rounded animate-pulse" />
+                            <div className="h-2 w-1/2 bg-slate-100 dark:bg-slate-700 rounded animate-pulse" />
                           </div>
                         </div>
                       ))}
@@ -1209,7 +1219,7 @@ const App = () => {
                     <div className="space-y-2 pt-1">
                       <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600 px-1">Results</p>
                       {searchResults.map((r) => (
-                        <div key={r.symbol} className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm transition-all hover:border-emerald-200 hover:shadow-md">
+                        <div key={r.symbol} className="p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-800 shadow-sm transition-all hover:border-emerald-200 hover:shadow-md">
                           <div className="flex justify-between items-start">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] bg-slate-400">
@@ -1232,7 +1242,7 @@ const App = () => {
                     </div>
                   )}
                   {fetchError && !isSearching && (
-                    <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-[10px] font-bold flex items-center gap-2">
+                    <div className="p-4 bg-rose-50 dark:bg-rose-950 border border-rose-100 dark:border-rose-900 rounded-2xl text-rose-600 text-[10px] font-bold flex items-center gap-2">
                       <AlertCircle className="w-3 h-3 shrink-0" /> {fetchError}
                     </div>
                   )}
@@ -1246,12 +1256,12 @@ const App = () => {
       {/* ── Sell Modal ───────────────────────────────────────────────────── */}
       {modalMode === 'sell' && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-widest text-rose-600 flex items-center gap-2">
                 <TrendingDown className="w-4 h-4" /> Sell Asset
               </h3>
-              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 p-1">
+              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 dark:text-slate-300 p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1261,7 +1271,7 @@ const App = () => {
               const availableBalance = entry?.[sellTicker] ?? 0;
               return (
               <div className="space-y-4">
-                <div className="p-4 rounded-2xl bg-rose-50 border border-rose-100">
+                <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950 border border-rose-100 dark:border-rose-900">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] bg-rose-500">
                       {sellTicker.slice(0, 3)}
@@ -1278,7 +1288,7 @@ const App = () => {
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
                       <input type="number" value={modalAmount} onChange={(e) => setModalAmount(Math.max(0, Number(e.target.value)))}
-                        className="w-full bg-slate-100 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-rose-500 outline-none" />
+                        className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-rose-500 outline-none" />
                     </div>
                   </div>
                   <div>
@@ -1288,11 +1298,11 @@ const App = () => {
                         const buys = (txByTicker[sellTicker] || []).filter((tx) => tx.type === 'buy');
                         return buys.length > 0 ? buys[0].date : undefined;
                       })()}
-                      className="w-full bg-slate-100 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 focus:ring-2 focus:ring-rose-500 outline-none" />
+                      className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 focus:ring-rose-500 outline-none" />
                   </div>
                 </div>
                 <div className="flex gap-3 pt-2">
-                  <button onClick={() => setSellTicker(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">Back</button>
+                  <button onClick={() => setSellTicker(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Back</button>
                   <button onClick={() => { addSell(sellTicker); closeModal(); }}
                     disabled={modalAmount <= 0 || modalAmount > availableBalance}
                     className="flex-1 py-3 rounded-2xl font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
@@ -1309,7 +1319,7 @@ const App = () => {
                   if (!asset) return null;
                   return (
                     <button key={ticker} onClick={() => { setSellTicker(ticker); setModalDate(TODAY); }}
-                      className="w-full p-4 rounded-2xl bg-white border border-slate-100 shadow-sm transition-all hover:border-rose-200 hover:shadow-md flex items-center gap-3 text-left">
+                      className="w-full p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-800 shadow-sm transition-all hover:border-rose-200 hover:shadow-md flex items-center gap-3 text-left">
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px]" style={{ backgroundColor: asset.color }}>
                         {ticker.slice(0, 3)}
                       </div>
@@ -1329,16 +1339,16 @@ const App = () => {
       {/* ── Edit Modal ──────────────────────────────────────────────────── */}
       {modalMode === 'edit' && editingTx && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 flex items-center gap-2">
                 <Pencil className="w-4 h-4" /> Edit Transaction
               </h3>
-              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 p-1">
+              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 dark:text-slate-300 p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-4 rounded-2xl bg-blue-50 border border-blue-100">
+            <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950 border border-blue-100 dark:border-blue-900">
               <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] ${editingTx.type === 'buy' ? 'bg-emerald-500' : 'bg-rose-500'}`}>
                   {editingTx.ticker.slice(0, 3)}
@@ -1355,17 +1365,17 @@ const App = () => {
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
                   <input type="number" value={modalAmount} onChange={(e) => setModalAmount(Math.max(0, Number(e.target.value)))}
-                    className="w-full bg-slate-100 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none" />
+                    className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none" />
                 </div>
               </div>
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Date</label>
                 <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
-                  className="w-full bg-slate-100 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none" />
+                  className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
             </div>
             <div className="flex gap-3 pt-2">
-              <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">Cancel</button>
+              <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Cancel</button>
               <button onClick={saveEdit} disabled={modalAmount <= 0}
                 className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
                 Save
@@ -1378,21 +1388,21 @@ const App = () => {
       {/* ── Import Modal ────────────────────────────────────────────────── */}
       {modalMode === 'import' && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
-          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-lg mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 flex items-center gap-2">
                 <Upload className="w-4 h-4" /> Import Transactions
               </h3>
-              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 p-1">
+              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 dark:text-slate-300 p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <div className="space-y-3">
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Upload CSV or paste from Google Sheets</p>
-              <label className="flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-slate-200 hover:border-blue-300 cursor-pointer transition-colors">
+              <label className="flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-600 hover:border-blue-300 cursor-pointer transition-colors">
                 <Upload className="w-4 h-4 text-slate-400" />
-                <span className="text-sm font-bold text-slate-500">Choose CSV file</span>
+                <span className="text-sm font-bold text-slate-500 dark:text-slate-400">Choose CSV file</span>
                 <input type="file" accept=".csv,.tsv,.txt" onChange={handleImportFile} className="hidden" />
               </label>
               <textarea
@@ -1400,7 +1410,7 @@ const App = () => {
                 onChange={(e) => setImportText(e.target.value)}
                 placeholder={`Date,Asset,Name,Action,Amount\n2020-01-01,GOOGL,Alphabet Inc,buy,10000\n2023-06-15,AAPL,Apple Inc,buy,5000`}
                 rows={6}
-                className="w-full bg-slate-100 border-none rounded-xl py-3 px-4 text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 px-4 text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none resize-none"
               />
             </div>
 
@@ -1409,7 +1419,7 @@ const App = () => {
                 <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">{importParsed.length} transaction{importParsed.length !== 1 ? 's' : ''} found</p>
                 <div className="max-h-40 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
                   {importParsed.map((row, i) => (
-                    <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold ${row.type === 'buy' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                    <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold ${row.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-700' : 'bg-rose-50 dark:bg-rose-950 text-rose-700'}`}>
                       <span className="uppercase text-[10px] font-black w-8">{row.type}</span>
                       <span className="flex-1 truncate">{row.name} ({row.ticker})</span>
                       <span>{formatCurrency(row.amount)}</span>
@@ -1426,7 +1436,7 @@ const App = () => {
             )}
 
             <div className="flex gap-3 pt-2">
-              <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">Cancel</button>
+              <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Cancel</button>
               <button onClick={confirmImport} disabled={importParsed.length === 0}
                 className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
                 Import {importParsed.length > 0 ? `(${importParsed.length})` : ''}
@@ -1435,6 +1445,20 @@ const App = () => {
           </div>
         </div>
       )}
+
+      {/* ── Footer ──────────────────────────────────────────────────────── */}
+      <div className="border-t border-slate-200 dark:border-slate-700 mt-8" />
+      <footer className="flex items-center justify-center gap-4 pt-4 pb-8 text-xs font-bold text-slate-400">
+        <a href="https://github.com/sdaveas/investo-js" target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1.5 hover:text-slate-600 dark:hover:text-slate-300 dark:text-slate-300 transition-colors">
+          <Github className="w-3.5 h-3.5" /> GitHub
+        </a>
+        <span className="text-slate-200">·</span>
+        <a href="https://buymeacoffee.com/br3gan" target="_blank" rel="noopener noreferrer"
+          className="flex items-center gap-1.5 hover:text-rose-500 transition-colors">
+          <Heart className="w-3.5 h-3.5" /> Buy me a coffee
+        </a>
+      </footer>
 
       <style>{`.custom-scrollbar::-webkit-scrollbar { width: 4px; } .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }`}</style>
     </div>

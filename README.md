@@ -1,5 +1,7 @@
 # Investo
 
+**[Live Demo →](https://investo-js.vercel.app/)** · [Buy me a coffee ☕](https://buymeacoffee.com/br3gan)
+
 An investment portfolio simulator that uses real market data from Yahoo Finance. Build a virtual portfolio by recording buy/sell transactions and track performance over time.
 
 ![Investo](investo.png)
