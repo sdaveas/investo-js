@@ -20,10 +20,10 @@ const COLORS = [
   '#ef4444', '#06b6d4', '#ec4899', '#84cc16',
 ];
 
-const formatCurrency = (val) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency', currency: 'USD', maximumFractionDigits: 0,
-  }).format(val);
+const formatCurrencyFn = new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+});
+const formatCurrency = (val) => formatCurrencyFn.format(val);
 
 const formatPercent = (val) => `${(val * 100).toFixed(1)}%`;
 
@@ -672,6 +672,7 @@ const App = () => {
     setDark((v) => { const next = !v; localStorage.setItem('investo-dark', next); return next; });
   }, []);
 
+
   return (
     <div className={`min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8${dark ? ' dark' : ''}`}>
       <div className="max-w-7xl mx-auto space-y-8">
@@ -726,7 +727,7 @@ const App = () => {
           </div>
           {/* Auth + Theme */}
           <div className="flex items-center gap-2">
-            <button onClick={toggleDark} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-500 dark:text-slate-400 transition-all" title={dark ? 'Light mode' : 'Dark mode'}>
+            <button onClick={toggleDark} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 dark:text-slate-400 transition-all" title={dark ? 'Light mode' : 'Dark mode'}>
               {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
             {isSyncing && <Cloud className="w-4 h-4 text-blue-400 animate-pulse" />}
@@ -954,7 +955,7 @@ className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border
                       <YAxis
                         tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
                         axisLine={false} tickLine={false}
-                        tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                       />
                       <Tooltip
                         contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
