@@ -309,6 +309,7 @@ const App = () => {
   // ─── Quick Add (AI) ──────────────────────────────────────────────────────
 
   const handleQuickAdd = useCallback(async () => {
+    console.log('handleQuickAdd called, supabase:', supabase, 'user:', user);
     if (!supabase) {
       // Fallback to local parser if Supabase not configured
       const parsed = parseNaturalTx(quickAddText);
@@ -387,6 +388,8 @@ const App = () => {
         };
       }
 
+      console.log('Invoking parse-transaction with:', { prompt: quickAddText, currentDate: TODAY, portfolio });
+      
       const { data, error } = await supabase.functions.invoke('parse-transaction', {
         body: {
           prompt: quickAddText,
@@ -394,6 +397,8 @@ const App = () => {
           portfolio,
         },
       });
+
+      console.log('Edge Function response:', { data, error });
 
       if (error) throw error;
       if (data.error) throw new Error(data.error);
