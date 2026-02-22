@@ -9,7 +9,7 @@ import {
   History, Zap, CheckCircle2, X,
   PanelLeftClose, PanelLeftOpen,
   ShoppingCart, TrendingDown, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
-  LogIn, LogOut, Cloud, Github, Heart, Moon, Sun,
+  LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText,
 } from 'lucide-react';
 import { searchTickers, fetchPrices } from './api';
 import { simulate, computeStats } from './simulation';
@@ -146,7 +146,7 @@ const App = () => {
   });
 
   // --- Modal ---
-  const [modalMode, setModalMode] = useState(null);           // 'buy' | 'sell' | 'edit' | 'import' | null
+  const [modalMode, setModalMode] = useState(null);           // 'buy' | 'sell' | 'edit' | 'import' | 'insights' | null
   const [stagedAsset, setStagedAsset] = useState(null);       // { symbol, name } — buy step 2
   const [sellTicker, setSellTicker] = useState(null);         // ticker — sell step 2
   const [modalAmount, setModalAmount] = useState(DEFAULT_AMOUNT);
@@ -157,6 +157,8 @@ const App = () => {
   const [quickAddStatus, setQuickAddStatus] = useState(null); // 'processing' | 'error:msg' | null
   const [quickAddPreview, setQuickAddPreview] = useState(null); // { ticker, name, type, amount, date }
   const [quickAddVerify, setQuickAddVerify] = useState(true);
+  const [aiInsights, setAiInsights] = useState(null);         // AI generated insights
+  const [isGeneratingInsights, setIsGeneratingInsights] = useState(false);
 
   // --- Auth & Sync ---
   const [user, setUser] = useState(null);
@@ -173,8 +175,13 @@ const App = () => {
     [transactions],
   );
 
-  const totalNetInvested = useMemo(
-    () => transactions.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : -tx.amount), 0),
+  const totalDeposits = useMemo(
+    () => transactions.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0),
+    [transactions],
+  );
+  
+  const totalWithdrawals = useMemo(
+    () => transactions.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0),
     [transactions],
   );
 
@@ -302,24 +309,109 @@ const App = () => {
   // ─── Quick Add (AI) ──────────────────────────────────────────────────────
 
   const handleQuickAdd = useCallback(async () => {
-    const parsed = parseNaturalTx(quickAddText);
-    if (!parsed || !parsed.asset) {
-      setQuickAddStatus('error:Could not understand. Try: "bought google 1/1/2025 $1000"');
-      setTimeout(() => setQuickAddStatus(null), 3000);
+    if (!supabase) {
+      // Fallback to local parser if Supabase not configured
+      const parsed = parseNaturalTx(quickAddText);
+      if (!parsed || !parsed.asset) {
+        setQuickAddStatus('error:Could not understand. Try: "bought google 1/1/2025 $1000"');
+        setTimeout(() => setQuickAddStatus(null), 3000);
+        return;
+      }
+      setQuickAddStatus('processing');
+      try {
+        const query = parsed.asset.toLowerCase();
+        let ticker = null;
+        let matchName = null;
+        const upperQuery = parsed.asset.toUpperCase();
+        if (selectedAssets[upperQuery]) {
+          ticker = upperQuery;
+          matchName = selectedAssets[upperQuery].name;
+        }
+        if (!ticker) {
+          for (const [t, a] of Object.entries(selectedAssets)) {
+            if (a.name.toLowerCase().includes(query) || t.toLowerCase().includes(query)) {
+              ticker = t;
+              matchName = a.name;
+              break;
+            }
+          }
+        }
+        if (!ticker) {
+          const results = await searchTickers(parsed.asset);
+          if (results.length === 0) {
+            setQuickAddStatus(`error:No asset found for "${parsed.asset}"`);
+            setTimeout(() => setQuickAddStatus(null), 3000);
+            return;
+          }
+          ticker = results[0].symbol.toUpperCase();
+          matchName = results[0].name;
+        }
+        let txAmount = parsed.amount || DEFAULT_AMOUNT;
+        if ((parsed.sellAll || parsed.sellFraction) && parsed.type === 'sell') {
+          const txDate = parsed.date || TODAY;
+          const entry = chartData.findLast((p) => p.date <= txDate);
+          const available = entry?.[ticker] ?? 0;
+          if (available > 0) txAmount = parsed.sellFraction ? Math.round(available * parsed.sellFraction) : available;
+        }
+        const resolved = { ticker, name: matchName, type: parsed.type, amount: txAmount, date: parsed.date || TODAY };
+        if (quickAddVerify) {
+          setQuickAddPreview(resolved);
+          setQuickAddStatus(null);
+        } else {
+          if (!selectedAssets[ticker]) {
+            const color = COLORS[colorIdx.current % COLORS.length];
+            colorIdx.current++;
+            setSelectedAssets((prev) => ({ ...prev, [ticker]: { name: matchName, color } }));
+          }
+          setTransactions((prev) => [...prev, { id: nextTxId++, ...resolved }]);
+          setQuickAddText('');
+          setQuickAddStatus(null);
+        }
+      } catch {
+        setQuickAddStatus('error:Search failed. Please try again.');
+        setTimeout(() => setQuickAddStatus(null), 3000);
+      }
       return;
     }
+
+    // AI-powered parsing via Edge Function
     setQuickAddStatus('processing');
     try {
-      // Check portfolio first: exact ticker or name substring match
-      const query = parsed.asset.toLowerCase();
+      // Build portfolio context with current values
+      const lastPoint = chartData[chartData.length - 1];
+      const portfolio = {};
+      for (const [ticker, asset] of Object.entries(selectedAssets)) {
+        portfolio[ticker] = {
+          name: asset.name,
+          currentValue: lastPoint?.[ticker] ?? 0,
+        };
+      }
+
+      const { data, error } = await supabase.functions.invoke('parse-transaction', {
+        body: {
+          prompt: quickAddText,
+          currentDate: TODAY,
+          portfolio,
+        },
+      });
+
+      if (error) throw error;
+      if (data.error) throw new Error(data.error);
+
+      const parsed = data;
+
+      // Search for ticker using the asset name from AI
       let ticker = null;
       let matchName = null;
-      // Exact ticker match
+      const query = parsed.asset.toLowerCase();
+
+      // Check if it's already in portfolio
       const upperQuery = parsed.asset.toUpperCase();
       if (selectedAssets[upperQuery]) {
         ticker = upperQuery;
         matchName = selectedAssets[upperQuery].name;
       }
+
       // Name substring match
       if (!ticker) {
         for (const [t, a] of Object.entries(selectedAssets)) {
@@ -330,6 +422,7 @@ const App = () => {
           }
         }
       }
+
       // Fall back to Yahoo search
       if (!ticker) {
         const results = await searchTickers(parsed.asset);
@@ -341,14 +434,41 @@ const App = () => {
         ticker = results[0].symbol.toUpperCase();
         matchName = results[0].name;
       }
+
+      // Calculate amount based on AI parsing
       let txAmount = parsed.amount || DEFAULT_AMOUNT;
-      if ((parsed.sellAll || parsed.sellFraction) && parsed.type === 'sell') {
+      if ((parsed.sellAll || parsed.fraction) && parsed.type === 'sell') {
         const txDate = parsed.date || TODAY;
         const entry = chartData.findLast((p) => p.date <= txDate);
         const available = entry?.[ticker] ?? 0;
-        if (available > 0) txAmount = parsed.sellFraction ? Math.round(available * parsed.sellFraction) : available;
+        if (available <= 0) {
+          setQuickAddStatus(`error:You don't have any ${matchName} to sell`);
+          setTimeout(() => setQuickAddStatus(null), 3000);
+          return;
+        }
+        txAmount = parsed.fraction ? Math.round(available * parsed.fraction) : available;
       }
-      const resolved = { ticker, name: matchName, type: parsed.type, amount: txAmount, date: parsed.date || TODAY };
+
+      // Validate sell amount if it's a regular sell (not fraction/all)
+      if (parsed.type === 'sell' && !parsed.sellAll && !parsed.fraction && parsed.amount) {
+        const txDate = parsed.date || TODAY;
+        const entry = chartData.findLast((p) => p.date <= txDate);
+        const available = entry?.[ticker] ?? 0;
+        if (available <= 0) {
+          setQuickAddStatus(`error:You don't have any ${matchName} to sell`);
+          setTimeout(() => setQuickAddStatus(null), 3000);
+          return;
+        }
+      }
+
+      const resolved = {
+        ticker,
+        name: matchName,
+        type: parsed.type,
+        amount: txAmount,
+        date: parsed.date || TODAY,
+      };
+
       if (quickAddVerify) {
         setQuickAddPreview(resolved);
         setQuickAddStatus(null);
@@ -362,11 +482,12 @@ const App = () => {
         setQuickAddText('');
         setQuickAddStatus(null);
       }
-    } catch {
-      setQuickAddStatus('error:Search failed. Please try again.');
+    } catch (error) {
+      console.error('AI parsing error:', error);
+      setQuickAddStatus(`error:${error.message || 'Could not understand. Please try again.'}`);
       setTimeout(() => setQuickAddStatus(null), 3000);
     }
-  }, [quickAddText, selectedAssets, chartData, quickAddVerify]);
+  }, [quickAddText, selectedAssets, chartData, quickAddVerify, supabase]);
 
   const confirmQuickAdd = useCallback(() => {
     if (!quickAddPreview) return;
@@ -451,6 +572,65 @@ const App = () => {
     reader.onload = (ev) => setImportText(ev.target.result);
     reader.readAsText(file);
   }, []);
+
+  // ─── AI Insights ───────────────────────────────────────────────────────
+
+  const generateAIInsights = useCallback(async () => {
+    if (!supabase || stats.length === 0) return;
+    
+    setIsGeneratingInsights(true);
+    setModalMode('insights');
+    
+    try {
+      // Build portfolio summary for AI - filter out "Total Portfolio" entry
+      const summary = stats
+        .filter(stat => stat.ticker !== null) // Exclude Total Portfolio
+        .map(stat => ({
+          name: stat.name,
+          ticker: stat.ticker,
+          currentValue: stat.finalValue,
+          totalReturn: stat.finalValue + stat.totalWithdrawals - stat.totalDeposits,
+          totalReturnPct: stat.totalDeposits > 0 ? ((stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) / stat.totalDeposits * 100) : 0,
+          annualizedReturn: stat.annualizedReturn * 100, // Convert to percentage
+          maxDrawdown: stat.maxDrawdown,
+        }));
+
+      const lastPoint = chartData[chartData.length - 1];
+      const totalValue = lastPoint?.['Total Portfolio'] ?? 0;
+
+      const requestBody = { 
+        summary,
+        totalValue,
+        totalInvested: totalDeposits,
+        totalWithdrawals,
+      };
+
+      console.log('Sending request to generate-insights:', requestBody);
+
+      const { data, error } = await supabase.functions.invoke('generate-insights', {
+        body: requestBody,
+      });
+
+      console.log('Edge Function response:', { data, error });
+
+      if (error) {
+        console.error('Edge Function error:', error);
+        throw error;
+      }
+      
+      if (data?.insights) {
+        setAiInsights(data.insights);
+      } else {
+        console.warn('No insights in response:', data);
+        setAiInsights("Unable to generate insights at this time.");
+      }
+    } catch (error) {
+      console.error('Failed to generate insights:', error);
+      setAiInsights("Unable to generate insights at this time. Please try again later.");
+    } finally {
+      setIsGeneratingInsights(false);
+    }
+  }, [supabase, stats, chartData, totalDeposits, totalWithdrawals]);
 
   const removeTx = useCallback((txId) => {
     setTransactions((prev) => {
@@ -699,17 +879,17 @@ const App = () => {
           </div>
           <div className="flex items-center gap-3">
             {isSimulating && <Loader2 className="w-5 h-5 animate-spin text-blue-500" />}
-            {totalNetInvested > 0 && (() => {
+            {totalDeposits > 0 && (() => {
               const lastPoint = chartData[chartData.length - 1];
               const currentBalance = lastPoint?.['Total Portfolio'] ?? selectedTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
-              const pnl = currentBalance - totalNetInvested;
-              const pnlPct = totalNetInvested > 0 ? (pnl / totalNetInvested) * 100 : 0;
+              const pnl = currentBalance + totalWithdrawals - totalDeposits;
+              const pnlPct = totalDeposits > 0 ? (pnl / totalDeposits) * 100 : 0;
               const isPositive = pnl >= 0;
               return (
               <div className="hidden sm:flex items-center gap-4">
                 <div className="text-right">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Net Invested</p>
-                  <p className="text-lg font-black text-blue-600">{formatCurrency(totalNetInvested)}</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Deposits</p>
+                  <p className="text-lg font-black text-blue-600">{formatCurrency(totalDeposits)}</p>
                 </div>
                 {currentBalance > 0 && (
                 <>
@@ -768,27 +948,31 @@ const App = () => {
           <aside className="lg:col-span-4 space-y-6">
 
             {/* AI Quick Add */}
-            <div className="relative">
-              <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
-              <span className="absolute left-8 top-0 -translate-y-1/2 bg-violet-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider">Beta</span>
-              <input
-                type="text"
-                value={quickAddText}
-                onChange={(e) => setQuickAddText(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && quickAddText.trim() && handleQuickAdd()}
-                placeholder='"bought google 1/1/2025 $1000"'
-                disabled={quickAddStatus === 'processing'}
-className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-3 pl-10 pr-12 text-sm font-medium focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none shadow-sm transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600 disabled:opacity-60"
-              />
-              <button
-                onClick={() => setQuickAddVerify((v) => !v)}
-                className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg transition-colors ${quickAddVerify ? 'text-violet-500 hover:text-violet-600' : 'text-slate-300 hover:text-slate-400'}`}
-                title={quickAddVerify ? 'Verification on — click to auto-add' : 'Verification off — click to verify before adding'}
-              >
-                {quickAddStatus === 'processing'
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                  : <ShieldCheck className="w-4 h-4" />}
-              </button>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 pl-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Describe transactions naturally</span>
+              </div>
+              <div className="relative">
+                <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
+                <input
+                  type="text"
+                  value={quickAddText}
+                  onChange={(e) => setQuickAddText(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && quickAddText.trim() && handleQuickAdd()}
+                  placeholder='sold half my apple last week'
+                  disabled={quickAddStatus === 'processing'}
+                  className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-3 pl-10 pr-12 text-sm font-medium focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none shadow-sm transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600 disabled:opacity-60"
+                />
+                <button
+                  onClick={() => setQuickAddVerify((v) => !v)}
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg transition-colors ${quickAddVerify ? 'text-violet-500 hover:text-violet-600' : 'text-slate-300 hover:text-slate-400'}`}
+                  title="Verify transactions before adding"
+                >
+                  {quickAddStatus === 'processing'
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <ShieldCheck className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
             {quickAddPreview && (
               <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${quickAddPreview.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-200 text-emerald-700' : 'bg-rose-50 dark:bg-rose-950 border-rose-200 text-rose-700'}`}>
@@ -871,15 +1055,15 @@ className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border
               {(() => {
                 const lastPoint = chartData[chartData.length - 1];
                 const currentBalance = lastPoint?.['Total Portfolio'] ?? selectedTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
-                const pnl = currentBalance - totalNetInvested;
-                const pnlPct = totalNetInvested > 0 ? (pnl / totalNetInvested) * 100 : 0;
+                const pnl = currentBalance + totalWithdrawals - totalDeposits;
+                const pnlPct = totalDeposits > 0 ? (pnl / totalDeposits) * 100 : 0;
                 const isPositive = pnl >= 0;
                 return (
                 <div className="p-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/20 space-y-3">
                   <div className="flex justify-between items-center">
                     <div>
-                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Net Invested</p>
-                      <p className="text-xl font-black text-emerald-400">{formatCurrency(Math.max(0, totalNetInvested))}</p>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Total Deposits</p>
+                      <p className="text-xl font-black text-emerald-400">{formatCurrency(totalDeposits)}</p>
                     </div>
                     <p className="text-[10px] font-bold text-white/30">{transactions.length} tx · {selectedTickers.length} asset{selectedTickers.length !== 1 ? 's' : ''}</p>
                   </div>
@@ -913,6 +1097,19 @@ className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border
                 <Download className="w-3.5 h-3.5" /> Export
               </button>
             </div>
+            {supabase && stats.length > 0 && (
+              <button
+                onClick={generateAIInsights}
+                disabled={isGeneratingInsights}
+                className="w-full py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-700 hover:to-blue-700 text-white shadow-lg disabled:opacity-60 active:scale-95"
+              >
+                {isGeneratingInsights ? (
+                  <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
+                ) : (
+                  <><Sparkles className="w-4 h-4" /> AI Insights</>
+                )}
+              </button>
+            )}
           </aside>
           )}
 
@@ -1043,18 +1240,14 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                         </div>
                         <div className="flex gap-6">
                           <div className="text-center">
-                            <p className={`text-xl font-black ${portfolio.totalReturn >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {portfolio.totalReturn >= 0 ? '+' : ''}{formatPercent(portfolio.totalReturn)}
+                            <p className={`text-xl font-black ${(portfolio.finalValue + portfolio.totalWithdrawals - portfolio.totalDeposits) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {(portfolio.finalValue + portfolio.totalWithdrawals - portfolio.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(portfolio.finalValue + portfolio.totalWithdrawals - portfolio.totalDeposits)}
                             </p>
                             <p className="text-[10px] font-bold text-slate-500 uppercase">Return</p>
                           </div>
                           <div className="text-center">
                             <p className="text-xl font-black text-slate-300">{formatPercent(portfolio.annualizedReturn)}</p>
                             <p className="text-[10px] font-bold text-slate-500 uppercase">Ann.</p>
-                          </div>
-                          <div className="text-center">
-                            <p className="text-xl font-black text-rose-400">{formatPercent(portfolio.maxDrawdown)}</p>
-                            <p className="text-[10px] font-bold text-slate-500 uppercase">Max DD</p>
                           </div>
                         </div>
                       </div>
@@ -1068,18 +1261,17 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                             <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
                               {stat.ticker}
                             </div>
-                            <div className={`flex items-center gap-1 text-xs font-black ${stat.totalReturn >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {stat.totalReturn >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
-                              {formatPercent(stat.totalReturn)}
+                            <div className={`flex items-center gap-1 text-xs font-black ${(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+                              {stat.totalDeposits > 0 ? formatPercent((stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) / stat.totalDeposits) : '—'}
                             </div>
                           </div>
                           <h4 className="text-xs font-bold mb-1 truncate text-slate-500 dark:text-slate-400">
-                            {stat.name} · {formatCurrency(stat.netInvested)}
+                            {stat.name} · {formatCurrency(stat.totalDeposits)}
                           </h4>
                           <p className="text-2xl font-black tracking-tight">{formatCurrency(stat.finalValue)}</p>
                           <div className="mt-2 flex gap-3 text-[10px] font-bold">
                             <span className="text-slate-400">Ann. {formatPercent(stat.annualizedReturn)}</span>
-                            <span className="text-rose-400">DD {formatPercent(stat.maxDrawdown)}</span>
                           </div>
                         </div>
                       ))}
@@ -1102,11 +1294,11 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                     <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest bg-slate-50/50 dark:bg-slate-800/50">
                       <tr>
                         <th className="px-8 py-4">Asset</th>
-                        <th className="px-8 py-4 text-right">Net Invested</th>
-                        <th className="px-8 py-4 text-right">Value</th>
+                        <th className="px-8 py-4 text-right">Deposits</th>
+                        <th className="px-8 py-4 text-right">Withdrawals</th>
+                        <th className="px-8 py-4 text-right">Balance</th>
                         <th className="px-8 py-4 text-right">Return</th>
                         <th className="px-8 py-4 text-right">Ann. Return</th>
-                        <th className="px-8 py-4 text-right">Max DD</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1118,15 +1310,20 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                               <span className="font-black text-sm">{stat.name} ({stat.ticker})</span>
                             </div>
                           </td>
-                          <td className="px-8 py-6 text-right font-bold text-slate-400 text-sm">{formatCurrency(stat.netInvested)}</td>
+                          <td className="px-8 py-6 text-right font-bold text-emerald-600 text-sm">+{formatCurrency(stat.totalDeposits)}</td>
+                          <td className="px-8 py-6 text-right font-bold text-rose-600 text-sm">{stat.totalWithdrawals > 0 ? '-' : ''}{formatCurrency(stat.totalWithdrawals)}</td>
                           <td className="px-8 py-6 text-right font-black text-sm">{formatCurrency(stat.finalValue)}</td>
                           <td className="px-8 py-6 text-right">
-                            <span className={`font-black text-sm ${stat.totalReturn >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {stat.totalReturn >= 0 ? '+' : ''}{formatPercent(stat.totalReturn)}
+                            <span className={`font-black text-sm ${(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                              {(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits)}
+                              {stat.totalDeposits > 0 ? (
+                                <span className="text-xs font-normal text-slate-400 ml-1">({(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatPercent((stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) / stat.totalDeposits)})</span>
+                              ) : (
+                                <span className="text-xs font-normal text-slate-400 ml-1">(—)</span>
+                              )}
                             </span>
                           </td>
                           <td className="px-8 py-6 text-right font-bold text-sm text-slate-500 dark:text-slate-400">{formatPercent(stat.annualizedReturn)}</td>
-                          <td className="px-8 py-6 text-right font-bold text-sm text-rose-500">{formatPercent(stat.maxDrawdown)}</td>
                         </tr>
                       ))}
                       {stats.find((s) => s.isPortfolio) && (() => {
@@ -1134,13 +1331,14 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                         return (
                           <tr className="bg-slate-900 text-white border-t border-slate-800">
                             <td className="px-8 py-10 font-black rounded-bl-[2.5rem]">Portfolio Total</td>
-                            <td className="px-8 py-10 text-right font-bold opacity-40">{formatCurrency(p.netInvested)}</td>
+                            <td className="px-8 py-10 text-right font-bold text-emerald-400">+{formatCurrency(p.totalDeposits)}</td>
+                            <td className="px-8 py-10 text-right font-bold text-rose-400">{p.totalWithdrawals > 0 ? '-' : ''}{formatCurrency(p.totalWithdrawals)}</td>
                             <td className="px-8 py-10 text-right font-black text-blue-400 text-lg">{formatCurrency(p.finalValue)}</td>
                             <td className="px-8 py-10 text-right font-black text-lg">
-                              {p.totalReturn >= 0 ? '+' : ''}{formatPercent(p.totalReturn)}
+                              {(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(p.finalValue + p.totalWithdrawals - p.totalDeposits)}
+                              <span className="text-xs font-normal text-slate-400 ml-1">({(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatPercent((p.finalValue + p.totalWithdrawals - p.totalDeposits) / p.totalDeposits)})</span>
                             </td>
-                            <td className="px-8 py-10 text-right font-bold">{formatPercent(p.annualizedReturn)}</td>
-                            <td className="px-8 py-10 text-right font-bold text-rose-400 rounded-br-[2.5rem]">{formatPercent(p.maxDrawdown)}</td>
+                            <td className="px-8 py-10 text-right font-bold rounded-br-[2.5rem]">{formatPercent(p.annualizedReturn)}</td>
                           </tr>
                         );
                       })()}
@@ -1450,6 +1648,44 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
               <button onClick={confirmImport} disabled={importParsed.length === 0}
                 className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
                 Import {importParsed.length > 0 ? `(${importParsed.length})` : ''}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── AI Insights Modal ───────────────────────────────────────────── */}
+      {modalMode === 'insights' && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-lg mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 flex items-center gap-2">
+                <Sparkles className="w-4 h-4" /> AI Portfolio Insights
+              </h3>
+              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 dark:text-slate-300 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950 border border-blue-100 dark:border-blue-900">
+              {isGeneratingInsights ? (
+                <div className="flex flex-col items-center justify-center py-8 gap-3">
+                  <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+                  <p className="text-sm font-bold text-slate-500">Analyzing your portfolio...</p>
+                </div>
+              ) : (
+                <div className="text-sm leading-relaxed text-slate-700 dark:text-slate-300 space-y-4">
+                  {aiInsights.split('\n\n').map((paragraph, i) => (
+                    <p key={i} className="whitespace-pre-line">{paragraph}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              <button onClick={closeModal}
+                className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-lg transition-all active:scale-95">
+                Close
               </button>
             </div>
           </div>
