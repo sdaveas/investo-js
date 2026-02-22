@@ -537,8 +537,18 @@ const App = () => {
 
   const signOut = useCallback(async () => {
     if (!supabase) return;
-    await supabase.auth.signOut();
+    try { await supabase.auth.signOut(); } catch { /* ignore */ }
+    isHydratingRef.current = true;
     setUser(null);
+    setTransactions([]);
+    setSelectedAssets({});
+    setPriceCache(null);
+    setChartData([]);
+    setStats([]);
+    colorIdx.current = 0;
+    fetchedRangesRef.current = {};
+    localStorage.removeItem(LS_KEY);
+    setTimeout(() => { isHydratingRef.current = false; }, 200);
   }, []);
 
   // ─── Auto-fetch prices ──────────────────────────────────────────
