@@ -9,9 +9,11 @@ import {
   History, Zap, CheckCircle2, X,
   PanelLeftClose, PanelLeftOpen,
   ShoppingCart, TrendingDown, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
+  LogIn, LogOut, Cloud,
 } from 'lucide-react';
 import { searchTickers, fetchPrices } from './api';
 import { simulate, computeStats } from './simulation';
+import { supabase } from './supabase';
 
 const COLORS = [
   '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b',
@@ -109,7 +111,16 @@ const parseNaturalTx = (text) => {
   return { type, amount, date, asset, sellAll, sellFraction };
 };
 
-let nextTxId = 1;
+const LS_KEY = 'investo-portfolio';
+let savedPortfolio = null;
+try {
+  const raw = localStorage.getItem(LS_KEY);
+  if (raw) savedPortfolio = JSON.parse(raw);
+} catch { /* ignore */ }
+
+let nextTxId = savedPortfolio?.transactions?.length
+  ? Math.max(...savedPortfolio.transactions.map((t) => t.id), 0) + 1
+  : 1;
 
 const App = () => {
   // --- Search ---
@@ -119,8 +130,8 @@ const App = () => {
   const [fetchError, setFetchError] = useState(null);
 
   // --- Portfolio ---
-  const [selectedAssets, setSelectedAssets] = useState({});   // { ticker: { name, color } }
-  const [transactions, setTransactions] = useState([]);       // [{ id, ticker, type, amount, date }]
+  const [selectedAssets, setSelectedAssets] = useState(() => savedPortfolio?.selectedAssets || {});
+  const [transactions, setTransactions] = useState(() => savedPortfolio?.transactions || []);
 
   // --- Simulation ---
   const [priceCache, setPriceCache] = useState(null);
@@ -144,7 +155,12 @@ const App = () => {
   const [quickAddPreview, setQuickAddPreview] = useState(null); // { ticker, name, type, amount, date }
   const [quickAddVerify, setQuickAddVerify] = useState(true);
 
-  const colorIdx = useRef(0);
+  // --- Auth & Sync ---
+  const [user, setUser] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const isHydratingRef = useRef(false);
+
+  const colorIdx = useRef(savedPortfolio?.colorIdx || 0);
   const fetchedRangesRef = useRef({});  // { ticker: startDate } — tracks what we've already fetched
 
   // ─── Derived ───────────────────────────────────────────────────────────────
@@ -452,7 +468,80 @@ const App = () => {
     });
   }, []);
 
-  // ─── Auto-fetch prices ────────────────────────────────────────────────────
+  // ─── Persistence ───────────────────────────────────────────────────────
+
+  // Save to localStorage on every change
+  useEffect(() => {
+    if (isHydratingRef.current) return;
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      transactions, selectedAssets, colorIdx: colorIdx.current,
+    }));
+  }, [transactions, selectedAssets]);
+
+  // Auth state listener
+  useEffect(() => {
+    if (!supabase) return;
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session?.user) {
+        const u = session.user;
+        setUser({
+          id: u.id, email: u.email,
+          name: u.user_metadata?.full_name || u.email,
+          avatar: u.user_metadata?.avatar_url,
+        });
+        // Load from cloud
+        try {
+          const { data } = await supabase.from('portfolios').select('*').eq('user_id', u.id).single();
+          if (data?.transactions?.length > 0) {
+            isHydratingRef.current = true;
+            setTransactions(data.transactions);
+            setSelectedAssets(data.selected_assets || {});
+            colorIdx.current = data.color_idx || 0;
+            nextTxId = Math.max(...data.transactions.map((t) => t.id), 0) + 1;
+            localStorage.setItem(LS_KEY, JSON.stringify({
+              transactions: data.transactions, selectedAssets: data.selected_assets || {}, colorIdx: data.color_idx || 0,
+            }));
+            setTimeout(() => { isHydratingRef.current = false; }, 200);
+          }
+        } catch { /* first sign-in — no data yet */ }
+      } else {
+        setUser(null);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Debounced save to Supabase
+  useEffect(() => {
+    if (!supabase || !user || isHydratingRef.current) return;
+    setIsSyncing(true);
+    const t = setTimeout(async () => {
+      try {
+        await supabase.from('portfolios').upsert({
+          user_id: user.id,
+          transactions,
+          selected_assets: selectedAssets,
+          color_idx: colorIdx.current,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+      } catch { /* silent */ }
+      setIsSyncing(false);
+    }, 1500);
+    return () => { clearTimeout(t); setIsSyncing(false); };
+  }, [transactions, selectedAssets, user]);
+
+  const signInWithGoogle = useCallback(async () => {
+    if (!supabase) return;
+    await supabase.auth.signInWithOAuth({ provider: 'google' });
+  }, []);
+
+  const signOut = useCallback(async () => {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setUser(null);
+  }, []);
+
+  // ─── Auto-fetch prices ──────────────────────────────────────────
 
   useEffect(() => {
     if (transactions.length === 0) return;
@@ -618,6 +707,28 @@ const App = () => {
               );
             })()}
           </div>
+          {/* Auth */}
+          <div className="flex items-center gap-2">
+            {isSyncing && <Cloud className="w-4 h-4 text-blue-400 animate-pulse" />}
+            {user ? (
+              <div className="flex items-center gap-2">
+                {user.avatar ? (
+                  <img src={user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-black">
+                    {user.name?.[0]?.toUpperCase()}
+                  </div>
+                )}
+                <button onClick={signOut} className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 transition-all" title="Sign out">
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
+            ) : supabase ? (
+              <button onClick={signInWithGoogle} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs transition-all">
+                <LogIn className="w-4 h-4" /> Sign in
+              </button>
+            ) : null}
+          </div>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -686,17 +797,6 @@ const App = () => {
                 <TrendingDown className="w-4 h-4" /> Sell
               </button>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => { setImportText(''); setModalMode('import'); }}
-                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95">
-                <Upload className="w-3.5 h-3.5" /> Import
-              </button>
-              <button onClick={exportCSV} disabled={transactions.length === 0}
-                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-40 active:scale-95">
-                <Download className="w-3.5 h-3.5" /> Export
-              </button>
-            </div>
-
             {/* Transaction ledger */}
             {selectedTickers.length > 0 && (
             <div className="bg-slate-900 text-white p-6 rounded-[2rem] shadow-2xl space-y-4">
@@ -773,6 +873,16 @@ const App = () => {
               })()}
             </div>
             )}
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => { setImportText(''); setModalMode('import'); }}
+                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95">
+                <Upload className="w-3.5 h-3.5" /> Import
+              </button>
+              <button onClick={exportCSV} disabled={transactions.length === 0}
+                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-40 active:scale-95">
+                <Download className="w-3.5 h-3.5" /> Export
+              </button>
+            </div>
           </aside>
           )}
 
