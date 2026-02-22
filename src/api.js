@@ -16,15 +16,15 @@ export async function searchTickers(query, maxResults = 6) {
   }));
 }
 
-export async function fetchPrices(tickers, startDate, endDate) {
-  const period1 = Math.floor(new Date(startDate).getTime() / 1000);
-  const period2 = Math.floor(new Date(endDate).getTime() / 1000);
-
+export async function fetchPrices(assetDateRanges) {
+  // assetDateRanges: { [ticker]: { startDate, endDate } }
   const results = {};
 
   await Promise.all(
-    tickers.map(async (ticker) => {
+    Object.entries(assetDateRanges).map(async ([ticker, { startDate, endDate }]) => {
       try {
+        const period1 = Math.floor(new Date(startDate).getTime() / 1000);
+        const period2 = Math.floor(new Date(endDate).getTime() / 1000);
         const url = `/api/chart/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${period1}&period2=${period2}&interval=1d`;
         const res = await fetch(url);
         if (!res.ok) return;

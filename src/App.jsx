@@ -4,10 +4,10 @@ import {
   ResponsiveContainer, Legend,
 } from 'recharts';
 import {
-  BarChart3, ArrowUpRight, ArrowDownRight, Percent,
-  DollarSign, AlertCircle, Search, Plus, PieChart, Loader2,
-  Settings, History, Zap, CheckCircle2, X, Lock, Unlock,
-  PanelLeftClose, PanelLeftOpen,
+  BarChart3, ArrowUpRight, ArrowDownRight,
+  DollarSign, AlertCircle, Search, Plus, Loader2,
+  Settings, History, Zap, CheckCircle2, X,
+  PanelLeftClose, PanelLeftOpen, Calendar,
 } from 'lucide-react';
 import { searchTickers, fetchPrices } from './api';
 import { simulate, computeStats } from './simulation';
@@ -27,23 +27,18 @@ const formatPercent = (val) => `${(val * 100).toFixed(1)}%`;
 const fiveYearsAgo = new Date();
 fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
 
-const App = () => {
-  // --- Parameters ---
-  const [initialAmount, setInitialAmount] = useState(10000);
-  const [startDate, setStartDate] = useState(fiveYearsAgo.toISOString().split('T')[0]);
-  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+const DEFAULT_AMOUNT = 10000;
 
+const App = () => {
   // --- Search ---
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [fetchError, setFetchError] = useState(null);
 
-  // --- Portfolio ---
-  const [selectedAssets, setSelectedAssets] = useState({});
-  const [allocations, setAllocations] = useState({});
-  const [lockedTickers, setLockedTickers] = useState(new Set());
-  const [allocationMode, setAllocationMode] = useState('percent');
+  // --- Portfolio: per-asset config ---
+  const [selectedAssets, setSelectedAssets] = useState({});          // { ticker: { name, color } }
+  const [assetConfigs, setAssetConfigs] = useState({});              // { ticker: { amount, startDate, endDate } }
 
   // --- Simulation ---
   const [priceCache, setPriceCache] = useState(null);
@@ -52,18 +47,16 @@ const App = () => {
   const [isSimulating, setIsSimulating] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [modalConfig, setModalConfig] = useState({ amount: DEFAULT_AMOUNT, startDate: fiveYearsAgo.toISOString().split('T')[0], endDate: new Date().toISOString().split('T')[0] });
+  const [stagedAsset, setStagedAsset] = useState(null); // { symbol, name }
 
   const colorIdx = useRef(0);
 
   // --- Derived ---
-  const selectedTickers = useMemo(() => Object.keys(allocations), [allocations]);
-  const totalAllocated = useMemo(
-    () => selectedTickers.reduce((s, id) => s + (allocations[id] || 0), 0),
-    [selectedTickers, allocations],
-  );
-  const isAllocationValid = useMemo(
-    () => Math.abs(totalAllocated - 1) < 0.001,
-    [totalAllocated],
+  const selectedTickers = useMemo(() => Object.keys(assetConfigs), [assetConfigs]);
+  const totalInvested = useMemo(
+    () => selectedTickers.reduce((s, t) => s + (assetConfigs[t]?.amount || 0), 0),
+    [selectedTickers, assetConfigs],
   );
 
   // --- Search via Yahoo Finance ---
@@ -88,93 +81,68 @@ const App = () => {
     return () => clearTimeout(t);
   }, [searchQuery, handleSearch]);
 
-  // --- Add / Remove with auto-redistribution ---
+  // --- Open search modal: seed config from last asset ---
+  const openSearch = useCallback(() => {
+    const existing = Object.values(assetConfigs);
+    const last = existing.length > 0 ? existing[existing.length - 1] : null;
+    setModalConfig({
+      amount: last?.amount ?? DEFAULT_AMOUNT,
+      startDate: last?.startDate ?? fiveYearsAgo.toISOString().split('T')[0],
+      endDate: last?.endDate ?? new Date().toISOString().split('T')[0],
+    });
+    setStagedAsset(null);
+    setShowSearch(true);
+  }, [assetConfigs]);
+
+  const closeSearch = useCallback(() => {
+    setShowSearch(false);
+    setSearchQuery('');
+    setSearchResults([]);
+    setStagedAsset(null);
+  }, []);
+
+  // --- Add / Remove ---
   const addAsset = useCallback((symbol, name) => {
     const ticker = symbol.toUpperCase();
-    if (allocations[ticker] !== undefined) return;
+    if (assetConfigs[ticker] !== undefined) return;
     const color = COLORS[colorIdx.current % COLORS.length];
     colorIdx.current++;
     setSelectedAssets((prev) => ({ ...prev, [ticker]: { name, color } }));
-    // Redistribute unlocked assets equally, respecting locks
-    setAllocations((prev) => {
-      const next = { ...prev };
-      const lockedTotal = [...lockedTickers].reduce((s, t) => s + (next[t] || 0), 0);
-      const unlocked = Object.keys(next).filter((t) => !lockedTickers.has(t));
-      const allUnlocked = [...unlocked, ticker];
-      const available = Math.max(0, 1 - lockedTotal);
-      const eq = available / allUnlocked.length;
-      allUnlocked.forEach((t) => (next[t] = eq));
-      return next;
-    });
+    setAssetConfigs((prev) => ({
+      ...prev,
+      [ticker]: { ...modalConfig },
+    }));
     setSearchQuery('');
     setSearchResults([]);
-  }, [allocations, lockedTickers]);
+  }, [assetConfigs, modalConfig]);
 
   const removeAsset = useCallback((ticker) => {
     setSelectedAssets((prev) => { const n = { ...prev }; delete n[ticker]; return n; });
-    setLockedTickers((prev) => { const n = new Set(prev); n.delete(ticker); return n; });
-    // Redistribute remaining unlocked assets to fill the gap
-    setAllocations((prev) => {
-      const n = { ...prev };
-      delete n[ticker];
-      const remaining = Object.keys(n);
-      if (remaining.length === 0) return n;
-      const unlocked = remaining.filter((t) => !lockedTickers.has(t));
-      const lockedTotal = remaining.filter((t) => lockedTickers.has(t)).reduce((s, t) => s + n[t], 0);
-      const available = Math.max(0, 1 - lockedTotal);
-      if (unlocked.length > 0) {
-        const unlTotal = unlocked.reduce((s, t) => s + n[t], 0);
-        if (unlTotal > 0) {
-          unlocked.forEach((t) => (n[t] = (n[t] / unlTotal) * available));
-        } else {
-          unlocked.forEach((t) => (n[t] = available / unlocked.length));
-        }
-      }
-      return n;
-    });
-  }, [lockedTickers]);
-
-  const toggleLock = useCallback((ticker) => {
-    setLockedTickers((prev) => {
-      const n = new Set(prev);
-      if (n.has(ticker)) n.delete(ticker); else n.add(ticker);
-      return n;
-    });
+    setAssetConfigs((prev) => { const n = { ...prev }; delete n[ticker]; return n; });
   }, []);
 
-  // --- Slider change: redistribute remaining among unlocked assets ---
-  const handleSliderChange = useCallback((changedTicker, newPct) => {
-    setAllocations((prev) => {
-      const others = Object.keys(prev).filter((t) => t !== changedTicker && !lockedTickers.has(t));
-      const lockedOthers = Object.keys(prev).filter((t) => t !== changedTicker && lockedTickers.has(t));
-      const lockedTotal = lockedOthers.reduce((s, t) => s + prev[t], 0);
-      // Cap newPct so locked assets aren't violated
-      const maxPct = Math.max(0, 1 - lockedTotal);
-      const capped = Math.min(newPct, maxPct);
-      const remaining = Math.max(0, 1 - capped - lockedTotal);
-      const next = { ...prev, [changedTicker]: capped };
-      if (others.length === 0) return next;
-      const oldOthersTotal = others.reduce((s, t) => s + prev[t], 0);
-      if (oldOthersTotal > 0) {
-        others.forEach((t) => { next[t] = (prev[t] / oldOthersTotal) * remaining; });
-      } else {
-        others.forEach((t) => { next[t] = remaining / others.length; });
-      }
-      return next;
-    });
-  }, [lockedTickers]);
+  const updateAssetConfig = useCallback((ticker, field, value) => {
+    setAssetConfigs((prev) => ({
+      ...prev,
+      [ticker]: { ...prev[ticker], [field]: value },
+    }));
+  }, []);
 
-  // --- Auto-fetch prices whenever tickers or date range change ---
+  // --- Auto-fetch prices whenever asset configs change ---
   useEffect(() => {
-    const active = selectedTickers.filter((t) => allocations[t] > 0);
+    const active = selectedTickers.filter((t) => assetConfigs[t]?.amount > 0);
     if (active.length === 0) return;
+
+    const dateRanges = Object.fromEntries(
+      active.map((t) => [t, { startDate: assetConfigs[t].startDate, endDate: assetConfigs[t].endDate }]),
+    );
 
     let cancelled = false;
     const debounce = setTimeout(async () => {
       setIsSimulating(true);
       setFetchError(null);
       try {
-        const prices = await fetchPrices(active, startDate, endDate);
+        const prices = await fetchPrices(dateRanges);
         if (!cancelled) setPriceCache(prices);
       } catch {
         if (!cancelled) setFetchError('Failed to fetch market data.');
@@ -184,18 +152,18 @@ const App = () => {
     }, 500);
 
     return () => { cancelled = true; clearTimeout(debounce); };
-  }, [selectedTickers, allocations, startDate, endDate]);
+  }, [selectedTickers, assetConfigs]);
 
-  // --- Recompute chart when prices or allocations change ---
+  // --- Recompute chart when prices or configs change ---
   useEffect(() => {
-    if (!priceCache || !isAllocationValid) return;
+    if (!priceCache) return;
     const active = selectedTickers.filter(
-      (t) => allocations[t] > 0 && priceCache[t]?.length > 0,
+      (t) => assetConfigs[t]?.amount > 0 && priceCache[t]?.length > 0,
     );
     if (active.length === 0) { setChartData([]); setStats([]); return; }
 
-    const filteredAlloc = Object.fromEntries(active.map((t) => [t, allocations[t]]));
-    const data = simulate(priceCache, filteredAlloc, initialAmount);
+    const configs = Object.fromEntries(active.map((t) => [t, { amount: assetConfigs[t].amount }]));
+    const data = simulate(priceCache, configs);
     setChartData(data);
 
     const names = Object.fromEntries(
@@ -204,12 +172,12 @@ const App = () => {
     const colors = Object.fromEntries(
       Object.entries(selectedAssets).map(([t, a]) => [t, a.color]),
     );
-    setStats(computeStats(data, active, filteredAlloc, initialAmount, names, colors));
-  }, [priceCache, allocations, initialAmount, isAllocationValid, selectedTickers, selectedAssets]);
+    setStats(computeStats(data, active, configs, names, colors));
+  }, [priceCache, assetConfigs, selectedTickers, selectedAssets]);
 
   // --- Active tickers for chart rendering ---
   const chartTickers = selectedTickers.filter(
-    (t) => allocations[t] > 0 && priceCache?.[t],
+    (t) => assetConfigs[t]?.amount > 0 && priceCache?.[t],
   );
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -239,10 +207,12 @@ const App = () => {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="text-right hidden sm:block">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Initial Investment</p>
-              <p className="text-lg font-black text-blue-600">{formatCurrency(initialAmount)}</p>
-            </div>
+            {totalInvested > 0 && (
+              <div className="text-right hidden sm:block">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Invested</p>
+                <p className="text-lg font-black text-blue-600">{formatCurrency(totalInvested)}</p>
+              </div>
+            )}
             {isSimulating && <Loader2 className="w-5 h-5 animate-spin text-blue-500" />}
           </div>
         </header>
@@ -253,117 +223,67 @@ const App = () => {
           {sidebarOpen && (
           <aside className="lg:col-span-4 space-y-6">
 
-            {/* Window */}
-            <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-200 space-y-4">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
-                <Settings className="w-4 h-4" /> Window
-              </h3>
-              <div className="space-y-4">
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-semibold">$</span>
-                  <input
-                    type="number" value={initialAmount}
-                    onChange={(e) => setInitialAmount(Number(e.target.value))}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-4 pl-8 pr-4 text-xl font-black focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
-                  <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 px-3 text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none" />
-                </div>
-              </div>
-            </div>
-
             {/* Add Assets button */}
             <button
-              onClick={() => setShowSearch(true)}
+              onClick={openSearch}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
             >
               <Plus className="w-4 h-4" /> Add Assets
             </button>
 
-            {/* Allocation */}
+            {/* Per-asset config cards */}
             {selectedTickers.length > 0 && (
             <div className="bg-slate-900 text-white p-6 rounded-[2rem] shadow-2xl space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                  <PieChart className="w-4 h-4" /> Allocation
-                </h3>
-                <div className="flex items-center gap-2">
-                  <div className="flex bg-white/10 rounded-lg p-0.5">
-                    <button onClick={() => setAllocationMode('percent')} className={`p-1.5 rounded-md transition-all ${allocationMode === 'percent' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}>
-                      <Percent className="w-3 h-3" />
-                    </button>
-                    <button onClick={() => setAllocationMode('amount')} className={`p-1.5 rounded-md transition-all ${allocationMode === 'amount' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}>
-                      <DollarSign className="w-3 h-3" />
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => {
-                      const unlocked = selectedTickers.filter((t) => !lockedTickers.has(t));
-                      if (unlocked.length === 0) return;
-                      const lockedTotal = selectedTickers.filter((t) => lockedTickers.has(t)).reduce((s, t) => s + (allocations[t] || 0), 0);
-                      const eq = (1 - lockedTotal) / unlocked.length;
-                      const n = { ...allocations };
-                      unlocked.forEach((t) => (n[t] = Math.max(0, eq)));
-                      setAllocations(n);
-                    }}
-                    className="text-[10px] font-bold bg-white/10 text-white/60 px-3 py-1.5 rounded-lg hover:bg-white/20 transition-all"
-                  >
-                    Equal Split
-                  </button>
-                </div>
-              </div>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                <Settings className="w-4 h-4" /> Assets
+              </h3>
 
-              <div className="space-y-3 max-h-80 overflow-y-auto pr-1 custom-scrollbar">
+              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
                 {selectedTickers.map((ticker) => {
                   const asset = selectedAssets[ticker];
-                  if (!asset) return null;
-                  const pct = allocations[ticker] || 0;
-                  const isLocked = lockedTickers.has(ticker);
-                  const amt = Math.round(pct * initialAmount);
+                  const config = assetConfigs[ticker];
+                  if (!asset || !config) return null;
                   return (
-                    <div key={ticker} className={`border rounded-2xl p-3 space-y-2 transition-all ${isLocked ? 'bg-white/10 border-white/20' : 'bg-white/5 border-white/10'}`}>
+                    <div key={ticker} className="border rounded-2xl p-3 space-y-2.5 bg-white/5 border-white/10">
                       <div className="flex items-center gap-2">
                         <div className="w-1.5 h-6 rounded-full" style={{ backgroundColor: asset.color }} />
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-bold truncate">{asset.name} ({ticker})</p>
                         </div>
-                        <span className="text-sm font-black tabular-nums text-right" style={{ color: asset.color }}>
-                          {allocationMode === 'percent' ? `${Math.round(pct * 100)}%` : formatCurrency(amt)}
+                        <span className="text-sm font-black tabular-nums" style={{ color: asset.color }}>
+                          {formatCurrency(config.amount)}
                         </span>
-                        <button onClick={() => toggleLock(ticker)} className={`p-1 rounded-lg transition-all ${isLocked ? 'text-amber-400 bg-amber-400/10' : 'text-white/20 hover:text-white/40'}`} title={isLocked ? 'Unlock' : 'Lock'}>
-                          {isLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-                        </button>
                         <button onClick={() => removeAsset(ticker)} className="text-rose-400 hover:text-rose-300 p-0.5">
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      {allocationMode === 'percent' ? (
+                      {/* Amount */}
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 text-xs font-bold">
+                          <DollarSign className="w-3 h-3" />
+                        </span>
                         <input
-                          type="range"
-                          min={0} max={100} step={1}
-                          value={Math.round(pct * 100)}
-                          onChange={(e) => handleSliderChange(ticker, parseInt(e.target.value) / 100)}
-                          disabled={isLocked}
-                          className="w-full h-1.5 rounded-full appearance-none cursor-pointer disabled:opacity-50"
-                          style={{
-                            background: `linear-gradient(to right, ${asset.color} ${pct * 100}%, rgba(255,255,255,0.1) ${pct * 100}%)`,
-                          }}
+                          type="number"
+                          value={config.amount}
+                          onChange={(e) => updateAssetConfig(ticker, 'amount', Math.max(0, Number(e.target.value)))}
+                          className="w-full bg-white/10 border border-white/10 rounded-xl py-2 pl-7 pr-3 text-sm font-black text-white focus:ring-2 focus:ring-blue-500 outline-none"
                         />
-                      ) : (
+                      </div>
+                      {/* Date range */}
+                      <div className="grid grid-cols-2 gap-2">
                         <input
-                          type="range"
-                          min={0} max={initialAmount} step={Math.max(1, Math.round(initialAmount / 100))}
-                          value={amt}
-                          onChange={(e) => handleSliderChange(ticker, parseInt(e.target.value) / initialAmount)}
-                          disabled={isLocked}
-                          className="w-full h-1.5 rounded-full appearance-none cursor-pointer disabled:opacity-50"
-                          style={{
-                            background: `linear-gradient(to right, ${asset.color} ${pct * 100}%, rgba(255,255,255,0.1) ${pct * 100}%)`,
-                          }}
+                          type="date"
+                          value={config.startDate}
+                          onChange={(e) => updateAssetConfig(ticker, 'startDate', e.target.value)}
+                          className="w-full bg-white/10 border border-white/10 rounded-xl py-1.5 px-2 text-[10px] font-bold text-white/80 focus:ring-2 focus:ring-blue-500 outline-none [color-scheme:dark]"
                         />
-                      )}
+                        <input
+                          type="date"
+                          value={config.endDate}
+                          onChange={(e) => updateAssetConfig(ticker, 'endDate', e.target.value)}
+                          className="w-full bg-white/10 border border-white/10 rounded-xl py-1.5 px-2 text-[10px] font-bold text-white/80 focus:ring-2 focus:ring-blue-500 outline-none [color-scheme:dark]"
+                        />
+                      </div>
                     </div>
                   );
                 })}
@@ -372,10 +292,10 @@ const App = () => {
               <div className="p-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/20">
                 <div className="flex justify-between items-center">
                   <div>
-                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Total</p>
-                    <p className="text-xl font-black text-emerald-400">{formatPercent(totalAllocated)}</p>
+                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Total Invested</p>
+                    <p className="text-xl font-black text-emerald-400">{formatCurrency(totalInvested)}</p>
                   </div>
-                  <p className="text-[10px] font-bold text-white/30">{formatCurrency(Math.round(totalAllocated * initialAmount))}</p>
+                  <p className="text-[10px] font-bold text-white/30">{selectedTickers.length} asset{selectedTickers.length !== 1 ? 's' : ''}</p>
                 </div>
               </div>
             </div>
@@ -407,7 +327,7 @@ const App = () => {
                     </div>
                     <div className="text-center">
                       <p className="font-black text-slate-800 text-lg uppercase tracking-tight">No Data Yet</p>
-                      <p className="text-sm">Add assets, set allocations to 100%, and click Simulate</p>
+                      <p className="text-sm">Add assets to start simulating</p>
                     </div>
                   </div>
                 ) : (
@@ -506,7 +426,7 @@ const App = () => {
                             </div>
                           </div>
                           <h4 className="text-xs font-bold mb-1 truncate text-slate-500">
-                            {stat.name} ({Math.round(stat.allocation * 100)}%)
+                            {stat.name} · {formatCurrency(stat.amount)}
                           </h4>
                           <p className="text-2xl font-black tracking-tight">{formatCurrency(stat.finalValue)}</p>
                           <div className="mt-2 flex gap-3 text-[10px] font-bold">
@@ -534,7 +454,6 @@ const App = () => {
                     <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest bg-slate-50/50">
                       <tr>
                         <th className="px-8 py-4">Asset</th>
-                        <th className="px-8 py-4 text-right">Allocation</th>
                         <th className="px-8 py-4 text-right">Invested</th>
                         <th className="px-8 py-4 text-right">Final Value</th>
                         <th className="px-8 py-4 text-right">Return</th>
@@ -551,8 +470,7 @@ const App = () => {
                               <span className="font-black text-sm">{stat.name} ({stat.ticker})</span>
                             </div>
                           </td>
-                          <td className="px-8 py-6 text-right font-bold text-slate-500 text-sm">{Math.round(stat.allocation * 100)}%</td>
-                          <td className="px-8 py-6 text-right font-bold text-slate-400 text-sm">{formatCurrency(stat.allocation * initialAmount)}</td>
+                          <td className="px-8 py-6 text-right font-bold text-slate-400 text-sm">{formatCurrency(stat.amount)}</td>
                           <td className="px-8 py-6 text-right font-black text-sm">{formatCurrency(stat.finalValue)}</td>
                           <td className="px-8 py-6 text-right">
                             <span className={`font-black text-sm ${stat.totalReturn >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -568,8 +486,7 @@ const App = () => {
                         return (
                           <tr className="bg-slate-900 text-white border-t border-slate-800">
                             <td className="px-8 py-10 font-black rounded-bl-[2.5rem]">Portfolio Total</td>
-                            <td className="px-8 py-10 text-right font-black">100%</td>
-                            <td className="px-8 py-10 text-right font-bold opacity-40">{formatCurrency(initialAmount)}</td>
+                            <td className="px-8 py-10 text-right font-bold opacity-40">{formatCurrency(p.amount)}</td>
                             <td className="px-8 py-10 text-right font-black text-blue-400 text-lg">{formatCurrency(p.finalValue)}</td>
                             <td className="px-8 py-10 text-right font-black text-lg">
                               {p.totalReturn >= 0 ? '+' : ''}{formatPercent(p.totalReturn)}
@@ -590,80 +507,154 @@ const App = () => {
 
       {/* Search Modal */}
       {showSearch && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={() => { setShowSearch(false); setSearchQuery(''); setSearchResults([]); }}>
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeSearch}>
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4 max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
-                <Search className="w-4 h-4" /> Add Assets
+                <Search className="w-4 h-4" /> Add Asset
               </h3>
-              <button onClick={() => { setShowSearch(false); setSearchQuery(''); setSearchResults([]); }} className="text-slate-400 hover:text-slate-600 p-1">
+              <button onClick={closeSearch} className="text-slate-400 hover:text-slate-600 p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search (Google, BTC, Amazon)..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                autoFocus
-                className="w-full bg-slate-100 border-none rounded-xl py-3.5 pl-10 pr-4 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none shadow-inner transition-all"
-              />
-              {isSearching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-500 animate-spin" />}
-            </div>
-            <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar pb-2">
-              {isSearching && (
-                <div className="space-y-3">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-slate-200 animate-pulse" />
-                      <div className="flex-1 space-y-2">
-                        <div className="h-3 w-2/3 bg-slate-200 rounded animate-pulse" />
-                        <div className="h-2 w-1/2 bg-slate-100 rounded animate-pulse" />
-                      </div>
+
+            {stagedAsset ? (
+              /* ── Step 2: Configure & confirm ── */
+              <div className="space-y-4">
+                <div className="p-4 rounded-2xl bg-blue-50 border border-blue-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] bg-blue-500">
+                      {stagedAsset.symbol.slice(0, 3)}
                     </div>
-                  ))}
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-black truncate">{stagedAsset.name}</h4>
+                      <p className="text-[10px] font-bold text-blue-500 uppercase">{stagedAsset.symbol}</p>
+                    </div>
+                  </div>
                 </div>
-              )}
-              {!isSearching && searchResults.length > 0 && (
-                <div className="space-y-2 pt-1">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 px-1">Results</p>
-                  {searchResults.map((r) => (
-                    <div key={r.symbol} className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm transition-all hover:border-blue-200 hover:shadow-md">
-                      <div className="flex justify-between items-start">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] bg-slate-400">
-                            {r.symbol.slice(0, 3)}
-                          </div>
-                          <div className="min-w-0">
-                            <h4 className="text-xs font-black truncate">{r.name}</h4>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase">{r.symbol} · {r.type || 'N/A'}</p>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
+                      <input
+                        type="number"
+                        value={modalConfig.amount}
+                        onChange={(e) => setModalConfig((c) => ({ ...c, amount: Math.max(0, Number(e.target.value)) }))}
+                        className="w-full bg-slate-100 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Start</label>
+                      <input
+                        type="date"
+                        value={modalConfig.startDate}
+                        onChange={(e) => setModalConfig((c) => ({ ...c, startDate: e.target.value }))}
+                        className="w-full bg-slate-100 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">End</label>
+                      <input
+                        type="date"
+                        value={modalConfig.endDate}
+                        onChange={(e) => setModalConfig((c) => ({ ...c, endDate: e.target.value }))}
+                        className="w-full bg-slate-100 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    onClick={() => setStagedAsset(null)}
+                    className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={() => {
+                      addAsset(stagedAsset.symbol, stagedAsset.name);
+                      closeSearch();
+                    }}
+                    className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-lg transition-all active:scale-95"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* ── Step 1: Search ── */
+              <>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search (Google, BTC, Amazon)..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    autoFocus
+                    className="w-full bg-slate-100 border-none rounded-xl py-3.5 pl-10 pr-4 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none shadow-inner transition-all"
+                  />
+                  {isSearching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-500 animate-spin" />}
+                </div>
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar pb-2">
+                  {isSearching && (
+                    <div className="space-y-3">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="p-4 rounded-2xl bg-slate-50 border border-slate-100 flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-lg bg-slate-200 animate-pulse" />
+                          <div className="flex-1 space-y-2">
+                            <div className="h-3 w-2/3 bg-slate-200 rounded animate-pulse" />
+                            <div className="h-2 w-1/2 bg-slate-100 rounded animate-pulse" />
                           </div>
                         </div>
-                        {allocations[r.symbol.toUpperCase()] !== undefined ? (
-                          <div className="p-2 bg-emerald-50 rounded-xl">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => addAsset(r.symbol, r.name)}
-                            className="p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-lg transition-all active:scale-90"
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                  {!isSearching && searchResults.length > 0 && (
+                    <div className="space-y-2 pt-1">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 px-1">Results</p>
+                      {searchResults.map((r) => (
+                        <div key={r.symbol} className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm transition-all hover:border-blue-200 hover:shadow-md">
+                          <div className="flex justify-between items-start">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] bg-slate-400">
+                                {r.symbol.slice(0, 3)}
+                              </div>
+                              <div className="min-w-0">
+                                <h4 className="text-xs font-black truncate">{r.name}</h4>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase">{r.symbol} · {r.type || 'N/A'}</p>
+                              </div>
+                            </div>
+                            {assetConfigs[r.symbol.toUpperCase()] !== undefined ? (
+                              <div className="p-2 bg-emerald-50 rounded-xl">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setStagedAsset({ symbol: r.symbol, name: r.name })}
+                                className="p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-lg transition-all active:scale-90"
+                              >
+                                <Plus className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {fetchError && !isSearching && (
+                    <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-[10px] font-bold flex items-center gap-2">
+                      <AlertCircle className="w-3 h-3 shrink-0" /> {fetchError}
+                    </div>
+                  )}
                 </div>
-              )}
-              {fetchError && !isSearching && (
-                <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl text-rose-600 text-[10px] font-bold flex items-center gap-2">
-                  <AlertCircle className="w-3 h-3 shrink-0" /> {fetchError}
-                </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         </div>
       )}
