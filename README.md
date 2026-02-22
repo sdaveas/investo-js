@@ -4,6 +4,8 @@
 
 An investment portfolio simulator that uses real market data from Yahoo Finance. Build a virtual portfolio by recording buy/sell transactions and track performance over time.
 
+> **Disclaimer:** Investo is a simulation tool only. No real money is involved — it does not execute any actual trades or connect to any brokerage. All transactions are virtual records used to simulate portfolio performance against real historical market data.
+
 ![Investo](investo.png)
 
 ## Features

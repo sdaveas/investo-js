@@ -811,20 +811,20 @@ className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border
               </div>
             )}
 
-            {/* Buy / Sell buttons */}
+            {/* Record Buy / Record Sell buttons */}
             <div className="grid grid-cols-2 gap-3">
               <button
                 onClick={openBuyModal}
                 className="bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
               >
-                <ShoppingCart className="w-4 h-4" /> Buy
+                <ShoppingCart className="w-4 h-4" /> Record Buy
               </button>
               <button
                 onClick={() => openSellModal()}
                 disabled={ownedTickers.length === 0}
                 className="bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
               >
-                <TrendingDown className="w-4 h-4" /> Sell
+                <TrendingDown className="w-4 h-4" /> Record Sell
               </button>
             </div>
             {/* Transaction ledger */}
@@ -844,11 +844,11 @@ className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border
                       <div className="flex items-center gap-2 mb-1">
                         <div className="w-1.5 h-4 rounded-full" style={{ backgroundColor: asset.color }} />
                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex-1 truncate">{asset.name} ({ticker})</p>
-                        <button onClick={() => openBuyForTicker(ticker)} className="p-1 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors" title="Buy more">
+                        <button onClick={() => openBuyForTicker(ticker)} className="p-1 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors" title="Record buy">
                           <Plus className="w-3 h-3" />
                         </button>
                         {ownedTickers.includes(ticker) && (
-                          <button onClick={() => openSellModal(ticker)} className="p-1 rounded-lg bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 transition-colors" title="Sell">
+                          <button onClick={() => openSellModal(ticker)} className="p-1 rounded-lg bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 transition-colors" title="Record sell">
                             <Minus className="w-3 h-3" />
                           </button>
                         )}
@@ -948,7 +948,7 @@ className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border
                     </div>
                     <div className="text-center">
                       <p className="font-black text-slate-800 dark:text-slate-100 text-lg uppercase tracking-tight">No Data Yet</p>
-                      <p className="text-sm">Buy assets to start simulating</p>
+                      <p className="text-sm">Record purchases to start simulating</p>
                     </div>
                   </div>
                 ) : (
@@ -1159,7 +1159,7 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
           <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4 max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-600 flex items-center gap-2">
-                <ShoppingCart className="w-4 h-4" /> Buy Asset
+                <ShoppingCart className="w-4 h-4" /> Record Purchase
               </h3>
               <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 dark:text-slate-300 p-1">
                 <X className="w-5 h-5" />
@@ -1189,7 +1189,7 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                     </div>
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Buy Date</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Purchase Date</label>
                     <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
                       className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" />
                   </div>
@@ -1198,7 +1198,7 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   <button onClick={() => setStagedAsset(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Back</button>
                   <button onClick={() => { addBuy(stagedAsset.symbol, stagedAsset.name); closeModal(); }}
                     className="flex-1 py-3 rounded-2xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg transition-all active:scale-95">
-                    Buy
+                    Record
                   </button>
                 </div>
               </div>
@@ -1269,7 +1269,7 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
           <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-widest text-rose-600 flex items-center gap-2">
-                <TrendingDown className="w-4 h-4" /> Sell Asset
+                <TrendingDown className="w-4 h-4" /> Record Sale
               </h3>
               <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 dark:text-slate-300 p-1">
                 <X className="w-5 h-5" />
@@ -1294,7 +1294,7 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                 </div>
                 <div className="space-y-3">
                   <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sell Amount</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sale Amount</label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
                       <input type="number" value={modalAmount} onChange={(e) => setModalAmount(Math.max(0, Number(e.target.value)))}
@@ -1302,7 +1302,7 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                     </div>
                   </div>
                   <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sell Date</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sale Date</label>
                     <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
                       min={(() => {
                         const buys = (txByTicker[sellTicker] || []).filter((tx) => tx.type === 'buy');
@@ -1316,14 +1316,14 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   <button onClick={() => { addSell(sellTicker); closeModal(); }}
                     disabled={modalAmount <= 0 || modalAmount > availableBalance}
                     className="flex-1 py-3 rounded-2xl font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
-                    Sell
+                    Record
                   </button>
                 </div>
               </div>
               );
             })() : (
               <div className="space-y-2">
-                <p className="text-[10px] font-black uppercase tracking-widest text-rose-500 px-1">Select asset to sell</p>
+                <p className="text-[10px] font-black uppercase tracking-widest text-rose-500 px-1">Select asset to record sale</p>
                 {ownedTickers.map((ticker) => {
                   const asset = selectedAssets[ticker];
                   if (!asset) return null;
