@@ -8,7 +8,7 @@ import {
   DollarSign, AlertCircle, Search, Loader2,
   History, Zap, CheckCircle2, X,
   PanelLeftClose, PanelLeftOpen,
-  ShoppingCart, TrendingDown, Trash2, Pencil, Plus, Minus, Upload, Download,
+  ShoppingCart, TrendingDown, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
 } from 'lucide-react';
 import { searchTickers, fetchPrices } from './api';
 import { simulate, computeStats } from './simulation';
@@ -32,6 +32,82 @@ const fiveYearsAgo = new Date();
 fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
 const DEFAULT_AMOUNT = 10000;
 const TODAY = new Date().toISOString().split('T')[0];
+
+const MONTHS_MAP = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
+
+const parseNaturalTx = (text) => {
+  const lower = text.toLowerCase().trim();
+  if (!lower) return null;
+
+  // Action
+  const type = /\b(sell|sold)\b/.test(lower) ? 'sell' : 'buy';
+
+  // Date — extract and remove from text
+  let date = null;
+  let cleaned = lower;
+  // MM/DD/YYYY
+  let m = cleaned.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) {
+    date = `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+    cleaned = cleaned.replace(m[0], ' ');
+  }
+  // YYYY-MM-DD
+  if (!date) {
+    m = cleaned.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (m) { date = `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`; cleaned = cleaned.replace(m[0], ' '); }
+  }
+  // Month DD, YYYY
+  if (!date) {
+    m = cleaned.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+(\d{1,2}),?\s*(\d{4})/);
+    if (m) { date = `${m[3]}-${MONTHS_MAP[m[1].slice(0, 3)]}-${m[2].padStart(2, '0')}`; cleaned = cleaned.replace(m[0], ' '); }
+  }
+  // DD Month YYYY
+  if (!date) {
+    m = cleaned.match(/(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*,?\s*(\d{4})/);
+    if (m) { date = `${m[3]}-${MONTHS_MAP[m[2].slice(0, 3)]}-${m[1].padStart(2, '0')}`; cleaned = cleaned.replace(m[0], ' '); }
+  }
+
+  // Amount — prefer $X,XXX then number+K/M then standalone large number
+  let amount = null;
+  m = cleaned.match(/\$\s?([\d,]+(?:\.\d+)?)\s*([km])?/i);
+  if (m) {
+    amount = parseFloat(m[1].replace(/,/g, ''));
+    if (m[2]?.toLowerCase() === 'k') amount *= 1000;
+    if (m[2]?.toLowerCase() === 'm') amount *= 1000000;
+    cleaned = cleaned.replace(m[0], ' ');
+  }
+  if (!amount) {
+    m = cleaned.match(/\b(\d[\d,]*(?:\.\d+)?)\s*([km])\b/i);
+    if (m) {
+      amount = parseFloat(m[1].replace(/,/g, ''));
+      if (m[2].toLowerCase() === 'k') amount *= 1000;
+      if (m[2].toLowerCase() === 'm') amount *= 1000000;
+      cleaned = cleaned.replace(m[0], ' ');
+    }
+  }
+  if (!amount) {
+    m = cleaned.match(/\b(\d[\d,]*(?:\.\d+)?)\b/);
+    if (m && parseFloat(m[1].replace(/,/g, '')) >= 100) {
+      amount = parseFloat(m[1].replace(/,/g, ''));
+      cleaned = cleaned.replace(m[0], ' ');
+    }
+  }
+
+  // Detect quantity keywords
+  const sellAll = /\ball\b/.test(cleaned);
+  const sellFraction = /\bhalf\b/.test(cleaned) ? 0.5 : /\bquarter\b/.test(cleaned) ? 0.25 : /\bthird\b/.test(cleaned) ? (1 / 3) : null;
+
+  // Asset — strip action words and prepositions
+  const asset = cleaned
+    .replace(/\b(buy|bought|sell|sold|purchase[d]?)\b/g, '')
+    .replace(/\b(at|on|for|of|in|the|worth|dollars?|usd|with|some|shares?|all|my|their|its|every|entire|total|position|everything|portfolio|half|quarter|third)\b/g, '')
+    .replace(/[,$]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!asset) return null;
+  return { type, amount, date, asset, sellAll, sellFraction };
+};
 
 let nextTxId = 1;
 
@@ -63,6 +139,10 @@ const App = () => {
   const [modalDate, setModalDate] = useState(fiveYearsAgo.toISOString().split('T')[0]);
   const [editingTx, setEditingTx] = useState(null);           // tx being edited
   const [importText, setImportText] = useState('');
+  const [quickAddText, setQuickAddText] = useState('');
+  const [quickAddStatus, setQuickAddStatus] = useState(null); // 'processing' | 'error:msg' | null
+  const [quickAddPreview, setQuickAddPreview] = useState(null); // { ticker, name, type, amount, date }
+  const [quickAddVerify, setQuickAddVerify] = useState(true);
 
   const colorIdx = useRef(0);
   const fetchedRangesRef = useRef({});  // { ticker: startDate } — tracks what we've already fetched
@@ -199,6 +279,88 @@ const App = () => {
       { id: nextTxId++, ticker, type: 'sell', amount: modalAmount, date: modalDate },
     ]);
   }, [modalAmount, modalDate]);
+
+  // ─── Quick Add (AI) ──────────────────────────────────────────────────────
+
+  const handleQuickAdd = useCallback(async () => {
+    const parsed = parseNaturalTx(quickAddText);
+    if (!parsed || !parsed.asset) {
+      setQuickAddStatus('error:Could not understand. Try: "bought google 1/1/2025 $1000"');
+      setTimeout(() => setQuickAddStatus(null), 3000);
+      return;
+    }
+    setQuickAddStatus('processing');
+    try {
+      // Check portfolio first: exact ticker or name substring match
+      const query = parsed.asset.toLowerCase();
+      let ticker = null;
+      let matchName = null;
+      // Exact ticker match
+      const upperQuery = parsed.asset.toUpperCase();
+      if (selectedAssets[upperQuery]) {
+        ticker = upperQuery;
+        matchName = selectedAssets[upperQuery].name;
+      }
+      // Name substring match
+      if (!ticker) {
+        for (const [t, a] of Object.entries(selectedAssets)) {
+          if (a.name.toLowerCase().includes(query) || t.toLowerCase().includes(query)) {
+            ticker = t;
+            matchName = a.name;
+            break;
+          }
+        }
+      }
+      // Fall back to Yahoo search
+      if (!ticker) {
+        const results = await searchTickers(parsed.asset);
+        if (results.length === 0) {
+          setQuickAddStatus(`error:No asset found for "${parsed.asset}"`);
+          setTimeout(() => setQuickAddStatus(null), 3000);
+          return;
+        }
+        ticker = results[0].symbol.toUpperCase();
+        matchName = results[0].name;
+      }
+      let txAmount = parsed.amount || DEFAULT_AMOUNT;
+      if ((parsed.sellAll || parsed.sellFraction) && parsed.type === 'sell') {
+        const txDate = parsed.date || TODAY;
+        const entry = chartData.findLast((p) => p.date <= txDate);
+        const available = entry?.[ticker] ?? 0;
+        if (available > 0) txAmount = parsed.sellFraction ? Math.round(available * parsed.sellFraction) : available;
+      }
+      const resolved = { ticker, name: matchName, type: parsed.type, amount: txAmount, date: parsed.date || TODAY };
+      if (quickAddVerify) {
+        setQuickAddPreview(resolved);
+        setQuickAddStatus(null);
+      } else {
+        if (!selectedAssets[ticker]) {
+          const color = COLORS[colorIdx.current % COLORS.length];
+          colorIdx.current++;
+          setSelectedAssets((prev) => ({ ...prev, [ticker]: { name: matchName, color } }));
+        }
+        setTransactions((prev) => [...prev, { id: nextTxId++, ...resolved }]);
+        setQuickAddText('');
+        setQuickAddStatus(null);
+      }
+    } catch {
+      setQuickAddStatus('error:Search failed. Please try again.');
+      setTimeout(() => setQuickAddStatus(null), 3000);
+    }
+  }, [quickAddText, selectedAssets, chartData, quickAddVerify]);
+
+  const confirmQuickAdd = useCallback(() => {
+    if (!quickAddPreview) return;
+    const { ticker, name, type, amount, date } = quickAddPreview;
+    if (!selectedAssets[ticker]) {
+      const color = COLORS[colorIdx.current % COLORS.length];
+      colorIdx.current++;
+      setSelectedAssets((prev) => ({ ...prev, [ticker]: { name, color } }));
+    }
+    setTransactions((prev) => [...prev, { id: nextTxId++, ticker, type, amount, date }]);
+    setQuickAddText('');
+    setQuickAddPreview(null);
+  }, [quickAddPreview, selectedAssets]);
 
   // ─── Import / Export ─────────────────────────────────────────────────────
 
@@ -463,6 +625,50 @@ const App = () => {
           {/* ── Sidebar ──────────────────────────────────────────────────── */}
           {sidebarOpen && (
           <aside className="lg:col-span-4 space-y-6">
+
+            {/* AI Quick Add */}
+            <div className="relative">
+              <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
+              <span className="absolute left-8 top-0 -translate-y-1/2 bg-violet-500 text-white text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider">Beta</span>
+              <input
+                type="text"
+                value={quickAddText}
+                onChange={(e) => setQuickAddText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && quickAddText.trim() && handleQuickAdd()}
+                placeholder='"bought google 1/1/2025 $1000"'
+                disabled={quickAddStatus === 'processing'}
+                className="w-full bg-white border border-slate-200 rounded-2xl py-3 pl-10 pr-12 text-sm font-medium focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none shadow-sm transition-all placeholder:text-slate-300 disabled:opacity-60"
+              />
+              <button
+                onClick={() => setQuickAddVerify((v) => !v)}
+                className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg transition-colors ${quickAddVerify ? 'text-violet-500 hover:text-violet-600' : 'text-slate-300 hover:text-slate-400'}`}
+                title={quickAddVerify ? 'Verification on — click to auto-add' : 'Verification off — click to verify before adding'}
+              >
+                {quickAddStatus === 'processing'
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <ShieldCheck className="w-4 h-4" />}
+              </button>
+            </div>
+            {quickAddPreview && (
+              <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${quickAddPreview.type === 'buy' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-rose-50 border-rose-200 text-rose-700'}`}>
+                <span className="uppercase text-[10px] font-black w-8">{quickAddPreview.type}</span>
+                <span className="flex-1 truncate">{quickAddPreview.name} ({quickAddPreview.ticker})</span>
+                <span>{formatCurrency(quickAddPreview.amount)}</span>
+                <span className="text-slate-400 text-[10px]">{formatShortDate(quickAddPreview.date)}</span>
+                <button onClick={confirmQuickAdd} className="p-1 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors" title="Confirm">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={() => setQuickAddPreview(null)} className="p-1 rounded-lg bg-slate-200 text-slate-500 hover:bg-slate-300 transition-colors" title="Cancel">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+            {quickAddStatus && quickAddStatus.startsWith('error') && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold bg-rose-50 text-rose-700">
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                {quickAddStatus.split(':').slice(1).join(':')}
+              </div>
+            )}
 
             {/* Buy / Sell buttons */}
             <div className="grid grid-cols-2 gap-3">
