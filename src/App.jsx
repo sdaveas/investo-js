@@ -727,12 +727,9 @@ const App = () => {
           </div>
           {/* Auth + Theme */}
           <div className="flex items-center gap-2">
-            <button onClick={toggleDark} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 dark:text-slate-400 transition-all" title={dark ? 'Light mode' : 'Dark mode'}>
-              {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            </button>
-            {isSyncing && <Cloud className="w-4 h-4 text-blue-400 animate-pulse" />}
             {user ? (
-              <div className="flex items-center gap-2">
+              <>
+                {isSyncing && <Cloud className="w-4 h-4 text-blue-400 animate-pulse" />}
                 {user.avatar ? (
                   <img src={user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
                 ) : (
@@ -743,12 +740,24 @@ const App = () => {
                 <button onClick={signOut} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 transition-all" title="Sign out">
                   <LogOut className="w-4 h-4" />
                 </button>
-              </div>
+                <button onClick={toggleDark} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 dark:text-slate-400 transition-all" title={dark ? 'Light mode' : 'Dark mode'}>
+                  {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                </button>
+              </>
             ) : supabase ? (
-              <button onClick={signInWithGoogle} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 font-bold text-xs transition-all">
-                <LogIn className="w-4 h-4" /> Sign in
+              <div className="flex items-center gap-2">
+                <button onClick={toggleDark} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 dark:text-slate-400 transition-all" title={dark ? 'Light mode' : 'Dark mode'}>
+                  {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+                </button>
+                <button onClick={signInWithGoogle} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 font-bold text-xs transition-all">
+                  <LogIn className="w-4 h-4" /> Sign in
+                </button>
+              </div>
+            ) : (
+              <button onClick={toggleDark} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 dark:text-slate-400 transition-all" title={dark ? 'Light mode' : 'Dark mode'}>
+                {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
               </button>
-            ) : null}
+            )}
           </div>
         </header>
 
