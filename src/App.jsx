@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend,
+  ResponsiveContainer, Legend, ReferenceDot,
 } from 'recharts';
 import {
   BarChart3, ArrowUpRight, ArrowDownRight,
-  DollarSign, AlertCircle, Search, Plus, Loader2,
-  Settings, History, Zap, CheckCircle2, X,
-  PanelLeftClose, PanelLeftOpen, Calendar,
+  DollarSign, AlertCircle, Search, Loader2,
+  History, Zap, CheckCircle2, X,
+  PanelLeftClose, PanelLeftOpen,
+  ShoppingCart, TrendingDown, Trash2, Pencil, Plus,
 } from 'lucide-react';
 import { searchTickers, fetchPrices } from './api';
 import { simulate, computeStats } from './simulation';
@@ -24,10 +25,15 @@ const formatCurrency = (val) =>
 
 const formatPercent = (val) => `${(val * 100).toFixed(1)}%`;
 
+const formatShortDate = (d) =>
+  new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
 const fiveYearsAgo = new Date();
 fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
-
 const DEFAULT_AMOUNT = 10000;
+const TODAY = new Date().toISOString().split('T')[0];
+
+let nextTxId = 1;
 
 const App = () => {
   // --- Search ---
@@ -36,30 +42,66 @@ const App = () => {
   const [isSearching, setIsSearching] = useState(false);
   const [fetchError, setFetchError] = useState(null);
 
-  // --- Portfolio: per-asset config ---
-  const [selectedAssets, setSelectedAssets] = useState({});          // { ticker: { name, color } }
-  const [assetConfigs, setAssetConfigs] = useState({});              // { ticker: { amount, startDate, endDate } }
+  // --- Portfolio ---
+  const [selectedAssets, setSelectedAssets] = useState({});   // { ticker: { name, color } }
+  const [transactions, setTransactions] = useState([]);       // [{ id, ticker, type, amount, date }]
 
   // --- Simulation ---
   const [priceCache, setPriceCache] = useState(null);
   const [chartData, setChartData] = useState([]);
   const [stats, setStats] = useState([]);
   const [isSimulating, setIsSimulating] = useState(false);
-  const [showSearch, setShowSearch] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [modalConfig, setModalConfig] = useState({ amount: DEFAULT_AMOUNT, startDate: fiveYearsAgo.toISOString().split('T')[0], endDate: new Date().toISOString().split('T')[0] });
-  const [stagedAsset, setStagedAsset] = useState(null); // { symbol, name }
+  const [hiddenSeries, setHiddenSeries] = useState(new Set());
+  const [showMarkers, setShowMarkers] = useState(true);
+
+  // --- Modal ---
+  const [modalMode, setModalMode] = useState(null);           // 'buy' | 'sell' | 'edit' | null
+  const [stagedAsset, setStagedAsset] = useState(null);       // { symbol, name } — buy step 2
+  const [sellTicker, setSellTicker] = useState(null);         // ticker — sell step 2
+  const [modalAmount, setModalAmount] = useState(DEFAULT_AMOUNT);
+  const [modalDate, setModalDate] = useState(fiveYearsAgo.toISOString().split('T')[0]);
+  const [editingTx, setEditingTx] = useState(null);           // tx being edited
 
   const colorIdx = useRef(0);
+  const fetchedRangesRef = useRef({});  // { ticker: startDate } — tracks what we've already fetched
 
-  // --- Derived ---
-  const selectedTickers = useMemo(() => Object.keys(assetConfigs), [assetConfigs]);
-  const totalInvested = useMemo(
-    () => selectedTickers.reduce((s, t) => s + (assetConfigs[t]?.amount || 0), 0),
-    [selectedTickers, assetConfigs],
+  // ─── Derived ───────────────────────────────────────────────────────────────
+
+  const selectedTickers = useMemo(
+    () => [...new Set(transactions.map((tx) => tx.ticker))],
+    [transactions],
   );
 
-  // --- Search via Yahoo Finance ---
+  const totalNetInvested = useMemo(
+    () => transactions.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : -tx.amount), 0),
+    [transactions],
+  );
+
+  // Group transactions by ticker for sidebar
+  const txByTicker = useMemo(() => {
+    const map = {};
+    transactions.forEach((tx) => {
+      if (!map[tx.ticker]) map[tx.ticker] = [];
+      map[tx.ticker].push(tx);
+    });
+    // Sort each group by date
+    Object.values(map).forEach((arr) => arr.sort((a, b) => a.date.localeCompare(b.date)));
+    return map;
+  }, [transactions]);
+
+  // Tickers that have a net-positive position (for sell modal)
+  const ownedTickers = useMemo(() => {
+    return selectedTickers.filter((t) => {
+      const net = (txByTicker[t] || []).reduce(
+        (s, tx) => s + (tx.type === 'buy' ? tx.amount : -tx.amount), 0,
+      );
+      return net > 0;
+    });
+  }, [selectedTickers, txByTicker]);
+
+  // ─── Search ────────────────────────────────────────────────────────────────
+
   const handleSearch = useCallback(async (query) => {
     const q = query.trim();
     if (q.length < 2) { setSearchResults([]); return; }
@@ -81,61 +123,122 @@ const App = () => {
     return () => clearTimeout(t);
   }, [searchQuery, handleSearch]);
 
-  // --- Open search modal: seed config from last asset ---
-  const openSearch = useCallback(() => {
-    const existing = Object.values(assetConfigs);
-    const last = existing.length > 0 ? existing[existing.length - 1] : null;
-    setModalConfig({
-      amount: last?.amount ?? DEFAULT_AMOUNT,
-      startDate: last?.startDate ?? fiveYearsAgo.toISOString().split('T')[0],
-      endDate: last?.endDate ?? new Date().toISOString().split('T')[0],
-    });
-    setStagedAsset(null);
-    setShowSearch(true);
-  }, [assetConfigs]);
+  // ─── Modal helpers ─────────────────────────────────────────────────────────
 
-  const closeSearch = useCallback(() => {
-    setShowSearch(false);
+  const openBuyModal = useCallback(() => {
+    const lastBuy = [...transactions].reverse().find((tx) => tx.type === 'buy');
+    setModalAmount(lastBuy?.amount ?? DEFAULT_AMOUNT);
+    setModalDate(lastBuy?.date ?? fiveYearsAgo.toISOString().split('T')[0]);
+    setStagedAsset(null);
+    setModalMode('buy');
+  }, [transactions]);
+
+  const openSellModal = useCallback((preselectedTicker = null) => {
+    setModalAmount(DEFAULT_AMOUNT);
+    setModalDate(TODAY);
+    setSellTicker(preselectedTicker);
+    setModalMode('sell');
+  }, []);
+
+  const openBuyForTicker = useCallback((ticker) => {
+    const asset = selectedAssets[ticker];
+    if (!asset) return;
+    const lastBuy = [...transactions].reverse().find((tx) => tx.type === 'buy' && tx.ticker === ticker);
+    setModalAmount(lastBuy?.amount ?? DEFAULT_AMOUNT);
+    setModalDate(lastBuy?.date ?? fiveYearsAgo.toISOString().split('T')[0]);
+    setStagedAsset({ symbol: ticker, name: asset.name });
+    setModalMode('buy');
+  }, [selectedAssets, transactions]);
+
+  const closeModal = useCallback(() => {
+    setModalMode(null);
     setSearchQuery('');
     setSearchResults([]);
     setStagedAsset(null);
+    setSellTicker(null);
+    setEditingTx(null);
   }, []);
 
-  // --- Add / Remove ---
-  const addAsset = useCallback((symbol, name) => {
-    const ticker = symbol.toUpperCase();
-    if (assetConfigs[ticker] !== undefined) return;
-    const color = COLORS[colorIdx.current % COLORS.length];
-    colorIdx.current++;
-    setSelectedAssets((prev) => ({ ...prev, [ticker]: { name, color } }));
-    setAssetConfigs((prev) => ({
-      ...prev,
-      [ticker]: { ...modalConfig },
-    }));
-    setSearchQuery('');
-    setSearchResults([]);
-  }, [assetConfigs, modalConfig]);
-
-  const removeAsset = useCallback((ticker) => {
-    setSelectedAssets((prev) => { const n = { ...prev }; delete n[ticker]; return n; });
-    setAssetConfigs((prev) => { const n = { ...prev }; delete n[ticker]; return n; });
+  const openEditModal = useCallback((tx) => {
+    setEditingTx(tx);
+    setModalAmount(tx.amount);
+    setModalDate(tx.date);
+    setModalMode('edit');
   }, []);
 
-  const updateAssetConfig = useCallback((ticker, field, value) => {
-    setAssetConfigs((prev) => ({
-      ...prev,
-      [ticker]: { ...prev[ticker], [field]: value },
-    }));
-  }, []);
-
-  // --- Auto-fetch prices whenever asset configs change ---
-  useEffect(() => {
-    const active = selectedTickers.filter((t) => assetConfigs[t]?.amount > 0);
-    if (active.length === 0) return;
-
-    const dateRanges = Object.fromEntries(
-      active.map((t) => [t, { startDate: assetConfigs[t].startDate, endDate: assetConfigs[t].endDate }]),
+  const saveEdit = useCallback(() => {
+    if (!editingTx) return;
+    setTransactions((prev) =>
+      prev.map((tx) => tx.id === editingTx.id ? { ...tx, amount: modalAmount, date: modalDate } : tx),
     );
+    closeModal();
+  }, [editingTx, modalAmount, modalDate, closeModal]);
+
+  // ─── Transaction actions ───────────────────────────────────────────────────
+
+  const addBuy = useCallback((symbol, name) => {
+    const ticker = symbol.toUpperCase();
+    if (!selectedAssets[ticker]) {
+      const color = COLORS[colorIdx.current % COLORS.length];
+      colorIdx.current++;
+      setSelectedAssets((prev) => ({ ...prev, [ticker]: { name, color } }));
+    }
+    setTransactions((prev) => [
+      ...prev,
+      { id: nextTxId++, ticker, type: 'buy', amount: modalAmount, date: modalDate },
+    ]);
+  }, [modalAmount, modalDate, selectedAssets]);
+
+  const addSell = useCallback((ticker) => {
+    setTransactions((prev) => [
+      ...prev,
+      { id: nextTxId++, ticker, type: 'sell', amount: modalAmount, date: modalDate },
+    ]);
+  }, [modalAmount, modalDate]);
+
+  const removeTx = useCallback((txId) => {
+    setTransactions((prev) => {
+      const next = prev.filter((tx) => tx.id !== txId);
+      // Clean up selectedAssets and fetchedRanges if ticker has no more transactions
+      const remaining = new Set(next.map((tx) => tx.ticker));
+      setSelectedAssets((sa) => {
+        const out = { ...sa };
+        Object.keys(out).forEach((t) => {
+          if (!remaining.has(t)) {
+            delete out[t];
+            delete fetchedRangesRef.current[t];
+          }
+        });
+        return out;
+      });
+      return next;
+    });
+  }, []);
+
+  // ─── Auto-fetch prices ────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (transactions.length === 0) return;
+
+    // Global start = oldest transaction date across ALL tickers
+    const tickers = [...new Set(transactions.map((tx) => tx.ticker))];
+    const globalStart = transactions.reduce(
+      (min, tx) => (tx.date < min ? tx.date : min), transactions[0].date,
+    );
+    // Pad start by 7 days so forward-fill covers weekend/holiday buy dates
+    const padded = new Date(globalStart);
+    padded.setDate(padded.getDate() - 7);
+    const fetchStart = padded.toISOString().split('T')[0];
+
+    const dateRanges = {};
+    tickers.forEach((t) => {
+      dateRanges[t] = { startDate: fetchStart, endDate: TODAY };
+    });
+
+    // Only refetch if a ticker is new or the global start moved earlier
+    const fetched = fetchedRangesRef.current;
+    const needsFetch = tickers.some((t) => !fetched[t] || fetched[t] > globalStart);
+    if (!needsFetch) return;
 
     let cancelled = false;
     const debounce = setTimeout(async () => {
@@ -143,7 +246,18 @@ const App = () => {
       setFetchError(null);
       try {
         const prices = await fetchPrices(dateRanges);
-        if (!cancelled) setPriceCache(prices);
+        if (!cancelled) {
+          tickers.forEach((t) => {
+            if (prices[t]?.length > 0) fetched[t] = globalStart;
+          });
+          setPriceCache((prev) => {
+            const next = {};
+            tickers.forEach((t) => {
+              next[t] = (prices[t]?.length > 0) ? prices[t] : (prev?.[t] || []);
+            });
+            return next;
+          });
+        }
       } catch {
         if (!cancelled) setFetchError('Failed to fetch market data.');
       } finally {
@@ -152,33 +266,66 @@ const App = () => {
     }, 500);
 
     return () => { cancelled = true; clearTimeout(debounce); };
-  }, [selectedTickers, assetConfigs]);
+  }, [transactions]);
 
-  // --- Recompute chart when prices or configs change ---
+  // ─── Recompute chart ──────────────────────────────────────────────────────
+
   useEffect(() => {
-    if (!priceCache) return;
-    const active = selectedTickers.filter(
-      (t) => assetConfigs[t]?.amount > 0 && priceCache[t]?.length > 0,
-    );
-    if (active.length === 0) { setChartData([]); setStats([]); return; }
+    if (!priceCache || transactions.length === 0) {
+      setChartData([]);
+      setStats([]);
+      return;
+    }
 
-    const configs = Object.fromEntries(active.map((t) => [t, { amount: assetConfigs[t].amount }]));
-    const data = simulate(priceCache, configs);
+    const activeTx = transactions.filter((tx) => priceCache[tx.ticker]?.length > 0);
+    if (activeTx.length === 0) { setChartData([]); setStats([]); return; }
+
+    const data = simulate(priceCache, activeTx);
     setChartData(data);
 
+    const tickers = [...new Set(activeTx.map((tx) => tx.ticker))];
     const names = Object.fromEntries(
       Object.entries(selectedAssets).map(([t, a]) => [t, a.name]),
     );
     const colors = Object.fromEntries(
       Object.entries(selectedAssets).map(([t, a]) => [t, a.color]),
     );
-    setStats(computeStats(data, active, configs, names, colors));
-  }, [priceCache, assetConfigs, selectedTickers, selectedAssets]);
+    setStats(computeStats(data, tickers, activeTx, names, colors));
+  }, [priceCache, transactions, selectedAssets]);
 
-  // --- Active tickers for chart rendering ---
-  const chartTickers = selectedTickers.filter(
-    (t) => assetConfigs[t]?.amount > 0 && priceCache?.[t],
-  );
+  const chartTickers = selectedTickers.filter((t) => priceCache?.[t]);
+
+  // Build two marker sets: per-asset line + Total Portfolio line
+  const { assetMarkers, portfolioMarkers } = useMemo(() => {
+    if (chartData.length === 0) return { assetMarkers: [], portfolioMarkers: [] };
+    const dateIndex = new Map(chartData.map((p, i) => [p.date, i]));
+    const asset = [];
+    const portfolio = [];
+    transactions.forEach((tx) => {
+      let idx = dateIndex.get(tx.date);
+      if (idx == null) idx = chartData.findIndex((p) => p.date >= tx.date);
+      if (idx == null || idx < 0) return;
+      const point = chartData[idx];
+      const tickerVal = point[tx.ticker];
+      if (tickerVal != null) {
+        asset.push({ ...tx, chartDate: point.date, value: tickerVal });
+      }
+      const totalVal = point['Total Portfolio'];
+      if (totalVal != null) {
+        portfolio.push({ ...tx, chartDate: point.date, value: totalVal });
+      }
+    });
+    return { assetMarkers: asset, portfolioMarkers: portfolio };
+  }, [chartData, transactions]);
+
+  const handleLegendClick = useCallback((e) => {
+    const key = e.dataKey;
+    setHiddenSeries((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
@@ -207,13 +354,32 @@ const App = () => {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {totalInvested > 0 && (
-              <div className="text-right hidden sm:block">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Invested</p>
-                <p className="text-lg font-black text-blue-600">{formatCurrency(totalInvested)}</p>
-              </div>
-            )}
             {isSimulating && <Loader2 className="w-5 h-5 animate-spin text-blue-500" />}
+            {totalNetInvested > 0 && (() => {
+              const lastPoint = chartData[chartData.length - 1];
+              const currentBalance = lastPoint?.['Total Portfolio'] ?? selectedTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
+              const pnl = currentBalance - totalNetInvested;
+              const pnlPct = totalNetInvested > 0 ? (pnl / totalNetInvested) * 100 : 0;
+              const isPositive = pnl >= 0;
+              return (
+              <div className="hidden sm:flex items-center gap-4">
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Net Invested</p>
+                  <p className="text-lg font-black text-blue-600">{formatCurrency(totalNetInvested)}</p>
+                </div>
+                {currentBalance > 0 && (
+                <>
+                  <div className="w-px h-8 bg-slate-200" />
+                  <div className="text-right">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Balance</p>
+                    <p className={`text-lg font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(currentBalance)}</p>
+                  </div>
+                  <span className={`text-xs font-black px-2 py-1 rounded-lg ${isPositive ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</span>
+                </>
+                )}
+              </div>
+              );
+            })()}
           </div>
         </header>
 
@@ -223,81 +389,97 @@ const App = () => {
           {sidebarOpen && (
           <aside className="lg:col-span-4 space-y-6">
 
-            {/* Add Assets button */}
-            <button
-              onClick={openSearch}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
-            >
-              <Plus className="w-4 h-4" /> Add Assets
-            </button>
+            {/* Buy / Sell buttons */}
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={openBuyModal}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
+              >
+                <ShoppingCart className="w-4 h-4" /> Buy
+              </button>
+              <button
+                onClick={() => openSellModal()}
+                disabled={ownedTickers.length === 0}
+                className="bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
+              >
+                <TrendingDown className="w-4 h-4" /> Sell
+              </button>
+            </div>
 
-            {/* Per-asset config cards */}
+            {/* Transaction ledger */}
             {selectedTickers.length > 0 && (
             <div className="bg-slate-900 text-white p-6 rounded-[2rem] shadow-2xl space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                <Settings className="w-4 h-4" /> Assets
+                <History className="w-4 h-4" /> Transactions
               </h3>
 
-              <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
                 {selectedTickers.map((ticker) => {
                   const asset = selectedAssets[ticker];
-                  const config = assetConfigs[ticker];
-                  if (!asset || !config) return null;
+                  const txs = txByTicker[ticker] || [];
+                  if (!asset || txs.length === 0) return null;
                   return (
-                    <div key={ticker} className="border rounded-2xl p-3 space-y-2.5 bg-white/5 border-white/10">
-                      <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-6 rounded-full" style={{ backgroundColor: asset.color }} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-bold truncate">{asset.name} ({ticker})</p>
-                        </div>
-                        <span className="text-sm font-black tabular-nums" style={{ color: asset.color }}>
-                          {formatCurrency(config.amount)}
-                        </span>
-                        <button onClick={() => removeAsset(ticker)} className="text-rose-400 hover:text-rose-300 p-0.5">
-                          <X className="w-3.5 h-3.5" />
+                    <div key={ticker} className="space-y-1.5">
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="w-1.5 h-4 rounded-full" style={{ backgroundColor: asset.color }} />
+                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex-1 truncate">{asset.name} ({ticker})</p>
+                        <button onClick={() => openBuyForTicker(ticker)} className="p-1 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors" title="Buy more">
+                          <Plus className="w-3 h-3" />
                         </button>
+                        {ownedTickers.includes(ticker) && (
+                          <button onClick={() => openSellModal(ticker)} className="p-1 rounded-lg bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 transition-colors" title="Sell">
+                            <TrendingDown className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
-                      {/* Amount */}
-                      <div className="relative">
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 text-xs font-bold">
-                          <DollarSign className="w-3 h-3" />
-                        </span>
-                        <input
-                          type="number"
-                          value={config.amount}
-                          onChange={(e) => updateAssetConfig(ticker, 'amount', Math.max(0, Number(e.target.value)))}
-                          className="w-full bg-white/10 border border-white/10 rounded-xl py-2 pl-7 pr-3 text-sm font-black text-white focus:ring-2 focus:ring-blue-500 outline-none"
-                        />
-                      </div>
-                      {/* Date range */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="date"
-                          value={config.startDate}
-                          onChange={(e) => updateAssetConfig(ticker, 'startDate', e.target.value)}
-                          className="w-full bg-white/10 border border-white/10 rounded-xl py-1.5 px-2 text-[10px] font-bold text-white/80 focus:ring-2 focus:ring-blue-500 outline-none [color-scheme:dark]"
-                        />
-                        <input
-                          type="date"
-                          value={config.endDate}
-                          onChange={(e) => updateAssetConfig(ticker, 'endDate', e.target.value)}
-                          className="w-full bg-white/10 border border-white/10 rounded-xl py-1.5 px-2 text-[10px] font-bold text-white/80 focus:ring-2 focus:ring-blue-500 outline-none [color-scheme:dark]"
-                        />
-                      </div>
+                      {txs.map((tx) => (
+                        <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'buy' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+                          <span className="uppercase text-[10px] font-black w-8">{tx.type}</span>
+                          <span className="flex-1 text-white/80">{formatCurrency(tx.amount)}</span>
+                          <span className="text-white/40 text-[10px]">{formatShortDate(tx.date)}</span>
+                          <button onClick={(e) => { e.stopPropagation(); removeTx(tx.id); }} className="text-white/20 hover:text-rose-400 p-0.5 transition-colors">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   );
                 })}
               </div>
 
-              <div className="p-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/20">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Total Invested</p>
-                    <p className="text-xl font-black text-emerald-400">{formatCurrency(totalInvested)}</p>
+              {(() => {
+                const lastPoint = chartData[chartData.length - 1];
+                const currentBalance = lastPoint?.['Total Portfolio'] ?? selectedTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
+                const pnl = currentBalance - totalNetInvested;
+                const pnlPct = totalNetInvested > 0 ? (pnl / totalNetInvested) * 100 : 0;
+                const isPositive = pnl >= 0;
+                return (
+                <div className="p-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/20 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Net Invested</p>
+                      <p className="text-xl font-black text-emerald-400">{formatCurrency(Math.max(0, totalNetInvested))}</p>
+                    </div>
+                    <p className="text-[10px] font-bold text-white/30">{transactions.length} tx · {selectedTickers.length} asset{selectedTickers.length !== 1 ? 's' : ''}</p>
                   </div>
-                  <p className="text-[10px] font-bold text-white/30">{selectedTickers.length} asset{selectedTickers.length !== 1 ? 's' : ''}</p>
+                  {currentBalance > 0 && (
+                  <>
+                    <div className="border-t border-white/10" />
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Current Balance</p>
+                        <p className={`text-xl font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(currentBalance)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-sm font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</p>
+                        <p className={`text-[10px] font-bold ${isPositive ? 'text-emerald-500/60' : 'text-rose-500/60'}`}>{isPositive ? '+' : ''}{formatCurrency(pnl)}</p>
+                      </div>
+                    </div>
+                  </>
+                  )}
                 </div>
-              </div>
+                );
+              })()}
             </div>
             )}
           </aside>
@@ -313,6 +495,14 @@ const App = () => {
                   <h2 className="text-2xl font-black tracking-tight text-slate-800 uppercase">Portfolio Performance</h2>
                   <p className="text-sm text-slate-400 italic font-medium">Historical data from Yahoo Finance</p>
                 </div>
+                {chartData.length > 0 && transactions.length > 0 && (
+                  <button
+                    onClick={() => setShowMarkers((v) => !v)}
+                    className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${showMarkers ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400'}`}
+                  >
+                    {showMarkers ? '● Markers On' : '○ Markers Off'}
+                  </button>
+                )}
               </div>
               <div className="flex-1 min-h-0 relative z-10">
                 {isSimulating ? (
@@ -327,7 +517,7 @@ const App = () => {
                     </div>
                     <div className="text-center">
                       <p className="font-black text-slate-800 text-lg uppercase tracking-tight">No Data Yet</p>
-                      <p className="text-sm">Add assets to start simulating</p>
+                      <p className="text-sm">Buy assets to start simulating</p>
                     </div>
                   </div>
                 ) : (
@@ -351,9 +541,9 @@ const App = () => {
                         formatter={(v, n) => [formatCurrency(v), n]}
                         labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })}
                       />
-                      <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold' }} />
+                      <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }} onClick={handleLegendClick} />
                       {chartTickers.length > 1 && (
-                        <Line type="monotone" dataKey="Total Portfolio" stroke="#0f172a" strokeWidth={6} dot={false} />
+<Line type="monotone" dataKey="Total Portfolio" stroke="#0f172a" strokeWidth={3} dot={false} hide={hiddenSeries.has('Total Portfolio')} />
                       )}
                       {chartTickers.map((ticker) => {
                         const asset = selectedAssets[ticker];
@@ -368,9 +558,38 @@ const App = () => {
                             strokeWidth={chartTickers.length > 1 ? 2 : 3}
                             strokeDasharray={chartTickers.length > 1 ? '4 4' : undefined}
                             dot={false}
+                            hide={hiddenSeries.has(ticker)}
                           />
                         );
                       })}
+                      {/* Per-asset markers — hidden when that asset's line is hidden */}
+                      {showMarkers && assetMarkers.map((m) => (
+                        !hiddenSeries.has(m.ticker) && (
+                          <ReferenceDot
+                            key={`a-${m.id}`}
+                            x={m.chartDate}
+                            y={m.value}
+                            r={5}
+                            fill={m.type === 'buy' ? '#10b981' : '#ef4444'}
+                            stroke="#fff"
+                            strokeWidth={2}
+                            isFront
+                          />
+                        )
+                      ))}
+                      {/* Total Portfolio markers — always visible unless portfolio line hidden */}
+                      {showMarkers && chartTickers.length > 1 && !hiddenSeries.has('Total Portfolio') && portfolioMarkers.map((m) => (
+                        <ReferenceDot
+                          key={`p-${m.id}`}
+                          x={m.chartDate}
+                          y={m.value}
+                          r={4}
+                          fill={m.type === 'buy' ? '#10b981' : '#ef4444'}
+                          stroke="#0f172a"
+                          strokeWidth={2}
+                          isFront
+                        />
+                      ))}
                     </LineChart>
                   </ResponsiveContainer>
                 )}
@@ -383,7 +602,6 @@ const App = () => {
               const assets = stats.filter((s) => !s.isPortfolio);
               return (
                 <div className="space-y-6">
-                  {/* Combined card – full width */}
                   {portfolio && (
                     <div className="p-6 rounded-[2rem] border bg-slate-900 text-white border-slate-800 shadow-2xl transition-all hover:translate-y-[-4px]">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -411,7 +629,6 @@ const App = () => {
                       </div>
                     </div>
                   )}
-                  {/* Individual asset cards – 3 per row */}
                   {assets.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                       {assets.map((stat, idx) => (
@@ -426,7 +643,7 @@ const App = () => {
                             </div>
                           </div>
                           <h4 className="text-xs font-bold mb-1 truncate text-slate-500">
-                            {stat.name} · {formatCurrency(stat.amount)}
+                            {stat.name} · {formatCurrency(stat.netInvested)}
                           </h4>
                           <p className="text-2xl font-black tracking-tight">{formatCurrency(stat.finalValue)}</p>
                           <div className="mt-2 flex gap-3 text-[10px] font-bold">
@@ -454,8 +671,8 @@ const App = () => {
                     <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest bg-slate-50/50">
                       <tr>
                         <th className="px-8 py-4">Asset</th>
-                        <th className="px-8 py-4 text-right">Invested</th>
-                        <th className="px-8 py-4 text-right">Final Value</th>
+                        <th className="px-8 py-4 text-right">Net Invested</th>
+                        <th className="px-8 py-4 text-right">Value</th>
                         <th className="px-8 py-4 text-right">Return</th>
                         <th className="px-8 py-4 text-right">Ann. Return</th>
                         <th className="px-8 py-4 text-right">Max DD</th>
@@ -470,7 +687,7 @@ const App = () => {
                               <span className="font-black text-sm">{stat.name} ({stat.ticker})</span>
                             </div>
                           </td>
-                          <td className="px-8 py-6 text-right font-bold text-slate-400 text-sm">{formatCurrency(stat.amount)}</td>
+                          <td className="px-8 py-6 text-right font-bold text-slate-400 text-sm">{formatCurrency(stat.netInvested)}</td>
                           <td className="px-8 py-6 text-right font-black text-sm">{formatCurrency(stat.finalValue)}</td>
                           <td className="px-8 py-6 text-right">
                             <span className={`font-black text-sm ${stat.totalReturn >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -486,7 +703,7 @@ const App = () => {
                         return (
                           <tr className="bg-slate-900 text-white border-t border-slate-800">
                             <td className="px-8 py-10 font-black rounded-bl-[2.5rem]">Portfolio Total</td>
-                            <td className="px-8 py-10 text-right font-bold opacity-40">{formatCurrency(p.amount)}</td>
+                            <td className="px-8 py-10 text-right font-bold opacity-40">{formatCurrency(p.netInvested)}</td>
                             <td className="px-8 py-10 text-right font-black text-blue-400 text-lg">{formatCurrency(p.finalValue)}</td>
                             <td className="px-8 py-10 text-right font-black text-lg">
                               {p.totalReturn >= 0 ? '+' : ''}{formatPercent(p.totalReturn)}
@@ -505,101 +722,63 @@ const App = () => {
         </div>
       </div>
 
-      {/* Search Modal */}
-      {showSearch && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeSearch}>
+      {/* ── Buy Modal ────────────────────────────────────────────────────── */}
+      {modalMode === 'buy' && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
           <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4 max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-2">
-                <Search className="w-4 h-4" /> Add Asset
+              <h3 className="text-xs font-bold uppercase tracking-widest text-emerald-600 flex items-center gap-2">
+                <ShoppingCart className="w-4 h-4" /> Buy Asset
               </h3>
-              <button onClick={closeSearch} className="text-slate-400 hover:text-slate-600 p-1">
+              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {stagedAsset ? (
-              /* ── Step 2: Configure & confirm ── */
               <div className="space-y-4">
-                <div className="p-4 rounded-2xl bg-blue-50 border border-blue-100">
+                <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-100">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] bg-blue-500">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] bg-emerald-500">
                       {stagedAsset.symbol.slice(0, 3)}
                     </div>
                     <div className="min-w-0">
                       <h4 className="text-sm font-black truncate">{stagedAsset.name}</h4>
-                      <p className="text-[10px] font-bold text-blue-500 uppercase">{stagedAsset.symbol}</p>
+                      <p className="text-[10px] font-bold text-emerald-600 uppercase">{stagedAsset.symbol}</p>
                     </div>
                   </div>
                 </div>
-
                 <div className="space-y-3">
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
-                      <input
-                        type="number"
-                        value={modalConfig.amount}
-                        onChange={(e) => setModalConfig((c) => ({ ...c, amount: Math.max(0, Number(e.target.value)) }))}
-                        className="w-full bg-slate-100 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none"
-                      />
+                      <input type="number" value={modalAmount} onChange={(e) => setModalAmount(Math.max(0, Number(e.target.value)))}
+                        className="w-full bg-slate-100 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-emerald-500 outline-none" />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Start</label>
-                      <input
-                        type="date"
-                        value={modalConfig.startDate}
-                        onChange={(e) => setModalConfig((c) => ({ ...c, startDate: e.target.value }))}
-                        className="w-full bg-slate-100 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">End</label>
-                      <input
-                        type="date"
-                        value={modalConfig.endDate}
-                        onChange={(e) => setModalConfig((c) => ({ ...c, endDate: e.target.value }))}
-                        className="w-full bg-slate-100 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none"
-                      />
-                    </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Buy Date</label>
+                    <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
+                      className="w-full bg-slate-100 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 focus:ring-2 focus:ring-emerald-500 outline-none" />
                   </div>
                 </div>
-
                 <div className="flex gap-3 pt-2">
-                  <button
-                    onClick={() => setStagedAsset(null)}
-                    className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all"
-                  >
-                    Back
-                  </button>
-                  <button
-                    onClick={() => {
-                      addAsset(stagedAsset.symbol, stagedAsset.name);
-                      closeSearch();
-                    }}
-                    className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-lg transition-all active:scale-95"
-                  >
-                    Add
+                  <button onClick={() => setStagedAsset(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">Back</button>
+                  <button onClick={() => { addBuy(stagedAsset.symbol, stagedAsset.name); closeModal(); }}
+                    className="flex-1 py-3 rounded-2xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg transition-all active:scale-95">
+                    Buy
                   </button>
                 </div>
               </div>
             ) : (
-              /* ── Step 1: Search ── */
               <>
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Search (Google, BTC, Amazon)..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    autoFocus
-                    className="w-full bg-slate-100 border-none rounded-xl py-3.5 pl-10 pr-4 text-sm font-medium focus:ring-2 focus:ring-blue-500 outline-none shadow-inner transition-all"
-                  />
-                  {isSearching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-500 animate-spin" />}
+                  <input type="text" placeholder="Search (Google, BTC, Amazon)..." value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)} autoFocus
+                    className="w-full bg-slate-100 border-none rounded-xl py-3.5 pl-10 pr-4 text-sm font-medium focus:ring-2 focus:ring-emerald-500 outline-none shadow-inner transition-all" />
+                  {isSearching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-emerald-500 animate-spin" />}
                 </div>
                 <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar pb-2">
                   {isSearching && (
@@ -617,9 +796,9 @@ const App = () => {
                   )}
                   {!isSearching && searchResults.length > 0 && (
                     <div className="space-y-2 pt-1">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-blue-600 px-1">Results</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600 px-1">Results</p>
                       {searchResults.map((r) => (
-                        <div key={r.symbol} className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm transition-all hover:border-blue-200 hover:shadow-md">
+                        <div key={r.symbol} className="p-4 rounded-2xl bg-white border border-slate-100 shadow-sm transition-all hover:border-emerald-200 hover:shadow-md">
                           <div className="flex justify-between items-start">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] bg-slate-400">
@@ -630,18 +809,12 @@ const App = () => {
                                 <p className="text-[10px] font-bold text-slate-400 uppercase">{r.symbol} · {r.type || 'N/A'}</p>
                               </div>
                             </div>
-                            {assetConfigs[r.symbol.toUpperCase()] !== undefined ? (
-                              <div className="p-2 bg-emerald-50 rounded-xl">
-                                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                              </div>
-                            ) : (
-                              <button
-                                onClick={() => setStagedAsset({ symbol: r.symbol, name: r.name })}
-                                className="p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-lg transition-all active:scale-90"
-                              >
-                                <Plus className="w-4 h-4" />
-                              </button>
-                            )}
+                            <button
+                              onClick={() => setStagedAsset({ symbol: r.symbol, name: r.name })}
+                              className="p-2 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 shadow-lg transition-all active:scale-90"
+                            >
+                              <ShoppingCart className="w-4 h-4" />
+                            </button>
                           </div>
                         </div>
                       ))}
@@ -655,6 +828,138 @@ const App = () => {
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Sell Modal ───────────────────────────────────────────────────── */}
+      {modalMode === 'sell' && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-rose-600 flex items-center gap-2">
+                <TrendingDown className="w-4 h-4" /> Sell Asset
+              </h3>
+              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {sellTicker ? (() => {
+              const entry = chartData.findLast((p) => p.date <= modalDate);
+              const availableBalance = entry?.[sellTicker] ?? 0;
+              return (
+              <div className="space-y-4">
+                <div className="p-4 rounded-2xl bg-rose-50 border border-rose-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] bg-rose-500">
+                      {sellTicker.slice(0, 3)}
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-sm font-black truncate">{selectedAssets[sellTicker]?.name}</h4>
+                      <p className="text-[10px] font-bold text-rose-500 uppercase">{sellTicker} · Available: {formatCurrency(Math.max(0, availableBalance))}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sell Amount</label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
+                      <input type="number" value={modalAmount} onChange={(e) => setModalAmount(Math.max(0, Number(e.target.value)))}
+                        className="w-full bg-slate-100 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-rose-500 outline-none" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sell Date</label>
+                    <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
+                      min={(() => {
+                        const buys = (txByTicker[sellTicker] || []).filter((tx) => tx.type === 'buy');
+                        return buys.length > 0 ? buys[0].date : undefined;
+                      })()}
+                      className="w-full bg-slate-100 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 focus:ring-2 focus:ring-rose-500 outline-none" />
+                  </div>
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <button onClick={() => setSellTicker(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">Back</button>
+                  <button onClick={() => { addSell(sellTicker); closeModal(); }}
+                    disabled={modalAmount <= 0 || modalAmount > availableBalance}
+                    className="flex-1 py-3 rounded-2xl font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
+                    Sell
+                  </button>
+                </div>
+              </div>
+              );
+            })() : (
+              <div className="space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-rose-500 px-1">Select asset to sell</p>
+                {ownedTickers.map((ticker) => {
+                  const asset = selectedAssets[ticker];
+                  if (!asset) return null;
+                  return (
+                    <button key={ticker} onClick={() => { setSellTicker(ticker); setModalDate(TODAY); }}
+                      className="w-full p-4 rounded-2xl bg-white border border-slate-100 shadow-sm transition-all hover:border-rose-200 hover:shadow-md flex items-center gap-3 text-left">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px]" style={{ backgroundColor: asset.color }}>
+                        {ticker.slice(0, 3)}
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-xs font-black truncate">{asset.name}</h4>
+                        <p className="text-[10px] font-bold text-slate-400 uppercase">{ticker}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Modal ──────────────────────────────────────────────────── */}
+      {modalMode === 'edit' && editingTx && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 flex items-center gap-2">
+                <Pencil className="w-4 h-4" /> Edit Transaction
+              </h3>
+              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 rounded-2xl bg-blue-50 border border-blue-100">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] ${editingTx.type === 'buy' ? 'bg-emerald-500' : 'bg-rose-500'}`}>
+                  {editingTx.ticker.slice(0, 3)}
+                </div>
+                <div className="min-w-0">
+                  <h4 className="text-sm font-black truncate">{selectedAssets[editingTx.ticker]?.name}</h4>
+                  <p className={`text-[10px] font-bold uppercase ${editingTx.type === 'buy' ? 'text-emerald-600' : 'text-rose-600'}`}>{editingTx.type} · {editingTx.ticker}</p>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
+                  <input type="number" value={modalAmount} onChange={(e) => setModalAmount(Math.max(0, Number(e.target.value)))}
+                    className="w-full bg-slate-100 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Date</label>
+                <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
+                  className="w-full bg-slate-100 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 focus:ring-2 focus:ring-blue-500 outline-none" />
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">Cancel</button>
+              <button onClick={saveEdit} disabled={modalAmount <= 0}
+                className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
+                Save
+              </button>
+            </div>
           </div>
         </div>
       )}
