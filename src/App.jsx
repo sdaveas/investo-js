@@ -8,7 +8,7 @@ import {
   DollarSign, AlertCircle, Search, Loader2,
   History, Zap, CheckCircle2, X,
   PanelLeftClose, PanelLeftOpen,
-  ShoppingCart, TrendingDown, Trash2, Pencil, Plus,
+  ShoppingCart, TrendingDown, Trash2, Pencil, Plus, Minus, Upload, Download,
 } from 'lucide-react';
 import { searchTickers, fetchPrices } from './api';
 import { simulate, computeStats } from './simulation';
@@ -56,12 +56,13 @@ const App = () => {
   const [showMarkers, setShowMarkers] = useState(true);
 
   // --- Modal ---
-  const [modalMode, setModalMode] = useState(null);           // 'buy' | 'sell' | 'edit' | null
+  const [modalMode, setModalMode] = useState(null);           // 'buy' | 'sell' | 'edit' | 'import' | null
   const [stagedAsset, setStagedAsset] = useState(null);       // { symbol, name } — buy step 2
   const [sellTicker, setSellTicker] = useState(null);         // ticker — sell step 2
   const [modalAmount, setModalAmount] = useState(DEFAULT_AMOUNT);
   const [modalDate, setModalDate] = useState(fiveYearsAgo.toISOString().split('T')[0]);
   const [editingTx, setEditingTx] = useState(null);           // tx being edited
+  const [importText, setImportText] = useState('');
 
   const colorIdx = useRef(0);
   const fetchedRangesRef = useRef({});  // { ticker: startDate } — tracks what we've already fetched
@@ -90,15 +91,18 @@ const App = () => {
     return map;
   }, [transactions]);
 
-  // Tickers that have a net-positive position (for sell modal)
+  // Tickers that still have a positive balance (market value > 0)
   const ownedTickers = useMemo(() => {
+    const lastPoint = chartData[chartData.length - 1];
     return selectedTickers.filter((t) => {
+      if (lastPoint && lastPoint[t] != null) return lastPoint[t] > 0;
+      // Fallback to net invested if no chart data yet
       const net = (txByTicker[t] || []).reduce(
         (s, tx) => s + (tx.type === 'buy' ? tx.amount : -tx.amount), 0,
       );
       return net > 0;
     });
-  }, [selectedTickers, txByTicker]);
+  }, [selectedTickers, chartData, txByTicker]);
 
   // ─── Search ────────────────────────────────────────────────────────────────
 
@@ -195,6 +199,77 @@ const App = () => {
       { id: nextTxId++, ticker, type: 'sell', amount: modalAmount, date: modalDate },
     ]);
   }, [modalAmount, modalDate]);
+
+  // ─── Import / Export ─────────────────────────────────────────────────────
+
+  const parseImportData = useCallback((text) => {
+    const lines = text.trim().split('\n').filter((l) => l.trim());
+    if (lines.length === 0) return [];
+    const delimiter = lines[0].includes('\t') ? '\t' : ',';
+    const header = lines[0].split(delimiter).map((h) => h.trim().toLowerCase());
+    const dateIdx = header.findIndex((h) => h === 'date');
+    const tickerIdx = header.findIndex((h) => ['asset', 'ticker', 'symbol'].includes(h));
+    const nameIdx = header.findIndex((h) => h === 'name');
+    const actionIdx = header.findIndex((h) => ['action', 'type'].includes(h));
+    const amountIdx = header.findIndex((h) => h === 'amount');
+    const hasHeader = dateIdx >= 0 && tickerIdx >= 0;
+    const rows = [];
+    for (let i = hasHeader ? 1 : 0; i < lines.length; i++) {
+      const cols = lines[i].split(delimiter).map((c) => c.trim());
+      const date = cols[hasHeader ? dateIdx : 0];
+      const ticker = (cols[hasHeader ? tickerIdx : 1] || '').toUpperCase();
+      const name = hasHeader && nameIdx >= 0 ? cols[nameIdx] : '';
+      const action = (cols[hasHeader ? actionIdx : 2] || '').toLowerCase();
+      const amount = parseFloat(cols[hasHeader ? amountIdx : 3]);
+      if (date && ticker && (action === 'buy' || action === 'sell') && amount > 0) {
+        rows.push({ date, ticker, name: name || ticker, type: action, amount });
+      }
+    }
+    return rows;
+  }, []);
+
+  const importParsed = useMemo(() => parseImportData(importText), [importText, parseImportData]);
+
+  const confirmImport = useCallback(() => {
+    if (importParsed.length === 0) return;
+    const newAssets = { ...selectedAssets };
+    const newTxs = [];
+    importParsed.forEach((row) => {
+      if (!newAssets[row.ticker]) {
+        newAssets[row.ticker] = { name: row.name, color: COLORS[colorIdx.current % COLORS.length] };
+        colorIdx.current++;
+      }
+      newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date });
+    });
+    setSelectedAssets(newAssets);
+    setTransactions((prev) => [...prev, ...newTxs]);
+    setImportText('');
+    setModalMode(null);
+  }, [importParsed, selectedAssets]);
+
+  const exportCSV = useCallback(() => {
+    const headers = 'Date,Asset,Name,Action,Amount';
+    const rows = transactions.map((tx) => {
+      const name = (selectedAssets[tx.ticker]?.name || tx.ticker).replace(/,/g, ' ');
+      return `${tx.date},${tx.ticker},${name},${tx.type},${tx.amount}`;
+    });
+    const csv = [headers, ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'investo-transactions.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [transactions, selectedAssets]);
+
+  const handleImportFile = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setImportText(ev.target.result);
+    reader.readAsText(file);
+  }, []);
 
   const removeTx = useCallback((txId) => {
     setTransactions((prev) => {
@@ -405,6 +480,16 @@ const App = () => {
                 <TrendingDown className="w-4 h-4" /> Sell
               </button>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => { setImportText(''); setModalMode('import'); }}
+                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95">
+                <Upload className="w-3.5 h-3.5" /> Import
+              </button>
+              <button onClick={exportCSV} disabled={transactions.length === 0}
+                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-40 active:scale-95">
+                <Download className="w-3.5 h-3.5" /> Export
+              </button>
+            </div>
 
             {/* Transaction ledger */}
             {selectedTickers.length > 0 && (
@@ -428,7 +513,7 @@ const App = () => {
                         </button>
                         {ownedTickers.includes(ticker) && (
                           <button onClick={() => openSellModal(ticker)} className="p-1 rounded-lg bg-rose-500/20 text-rose-400 hover:bg-rose-500/30 transition-colors" title="Sell">
-                            <TrendingDown className="w-3 h-3" />
+                            <Minus className="w-3 h-3" />
                           </button>
                         )}
                       </div>
@@ -958,6 +1043,67 @@ const App = () => {
               <button onClick={saveEdit} disabled={modalAmount <= 0}
                 className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
                 Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Import Modal ────────────────────────────────────────────────── */}
+      {modalMode === 'import' && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
+          <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-lg mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 flex items-center gap-2">
+                <Upload className="w-4 h-4" /> Import Transactions
+              </h3>
+              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Upload CSV or paste from Google Sheets</p>
+              <label className="flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-slate-200 hover:border-blue-300 cursor-pointer transition-colors">
+                <Upload className="w-4 h-4 text-slate-400" />
+                <span className="text-sm font-bold text-slate-500">Choose CSV file</span>
+                <input type="file" accept=".csv,.tsv,.txt" onChange={handleImportFile} className="hidden" />
+              </label>
+              <textarea
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                placeholder={`Date,Asset,Name,Action,Amount\n2020-01-01,GOOGL,Alphabet Inc,buy,10000\n2023-06-15,AAPL,Apple Inc,buy,5000`}
+                rows={6}
+                className="w-full bg-slate-100 border-none rounded-xl py-3 px-4 text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+              />
+            </div>
+
+            {importParsed.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">{importParsed.length} transaction{importParsed.length !== 1 ? 's' : ''} found</p>
+                <div className="max-h-40 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                  {importParsed.map((row, i) => (
+                    <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold ${row.type === 'buy' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                      <span className="uppercase text-[10px] font-black w-8">{row.type}</span>
+                      <span className="flex-1 truncate">{row.name} ({row.ticker})</span>
+                      <span>{formatCurrency(row.amount)}</span>
+                      <span className="text-slate-400 text-[10px]">{row.date}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {importText.trim() && importParsed.length === 0 && (
+              <p className="text-[10px] font-bold text-rose-500 flex items-center gap-1">
+                <AlertCircle className="w-3 h-3" /> No valid transactions found. Expected: Date, Asset, Action, Amount
+              </p>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-all">Cancel</button>
+              <button onClick={confirmImport} disabled={importParsed.length === 0}
+                className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
+                Import {importParsed.length > 0 ? `(${importParsed.length})` : ''}
               </button>
             </div>
           </div>
