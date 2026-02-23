@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, ReferenceDot,
+  PieChart, Pie, Cell,
 } from 'recharts';
 import {
   BarChart3, ArrowUpRight, ArrowDownRight,
@@ -10,6 +11,7 @@ import {
   PanelLeftClose, PanelLeftOpen,
   ShoppingCart, TrendingDown, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
   LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { searchTickers, fetchPrices } from './api';
 import { simulate, computeStats } from './simulation';
@@ -141,6 +143,7 @@ const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [hiddenSeries, setHiddenSeries] = useState(new Set());
   const [showMarkers, setShowMarkers] = useState(true);
+  const [chartPage, setChartPage] = useState(0); // 0 = line chart, 1 = pie chart
   const [dark, setDark] = useState(() => {
     try { return localStorage.getItem('investo-dark') === 'true'; } catch { return false; }
   });
@@ -1182,17 +1185,36 @@ const App = () => {
             <div className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 h-[550px] flex flex-col overflow-hidden relative">
               <div className="flex justify-between items-start mb-8 relative z-10">
                 <div>
-                  <h2 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">Portfolio Performance</h2>
-                  <p className="text-sm text-slate-400 italic font-medium">Historical data from Yahoo Finance</p>
+                  <h2 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">{chartPage === 0 ? 'Portfolio Performance' : 'Allocation'}</h2>
+                  <p className="text-sm text-slate-400 italic font-medium">{chartPage === 0 ? 'Historical data from Yahoo Finance' : 'Current portfolio breakdown'}</p>
                 </div>
-                {chartData.length > 0 && transactions.length > 0 && (
-                  <button
-                    onClick={() => setShowMarkers((v) => !v)}
-                    className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
-                  >
-                    {showMarkers ? '● Markers On' : '○ Markers Off'}
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {chartPage === 0 && chartData.length > 0 && transactions.length > 0 && (
+                    <button
+                      onClick={() => setShowMarkers((v) => !v)}
+                      className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
+                    >
+                      {showMarkers ? '● Markers On' : '○ Markers Off'}
+                    </button>
+                  )}
+                  {chartData.length > 0 && chartTickers.length > 0 && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setChartPage((p) => (p === 0 ? 1 : 0))}
+                        className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <span className="text-[10px] font-bold text-slate-400 w-8 text-center">{chartPage + 1}/2</span>
+                      <button
+                        onClick={() => setChartPage((p) => (p === 0 ? 1 : 0))}
+                        className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex-1 min-h-0 relative z-10">
                 {isSimulating ? (
@@ -1210,7 +1232,7 @@ const App = () => {
                       <p className="text-sm">Record purchases to start simulating</p>
                     </div>
                   </div>
-                ) : (
+                ) : chartPage === 0 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
@@ -1223,7 +1245,7 @@ const App = () => {
                       <YAxis
                         tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
                         axisLine={false} tickLine={false}
-tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                       />
                       <Tooltip
                         contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
@@ -1252,7 +1274,6 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                           />
                         );
                       })}
-                      {/* Per-asset markers — hidden when that asset's line is hidden */}
                       {showMarkers && assetMarkers.map((m) => (
                         !hiddenSeries.has(m.ticker) && (
                           <ReferenceDot
@@ -1267,7 +1288,6 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                           />
                         )
                       ))}
-                      {/* Total Portfolio markers — always visible unless portfolio line hidden */}
                       {showMarkers && chartTickers.length > 1 && !hiddenSeries.has('Total Portfolio') && portfolioMarkers.map((m) => (
                         <ReferenceDot
                           key={`p-${m.id}`}
@@ -1282,7 +1302,64 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                       ))}
                     </LineChart>
                   </ResponsiveContainer>
-                )}
+                ) : (() => {
+                  const lastPoint = chartData[chartData.length - 1];
+                  const pieData = chartTickers
+                    .map((ticker) => ({
+                      name: `${selectedAssets[ticker]?.name || ticker} (${ticker})`,
+                      value: lastPoint?.[ticker] ?? 0,
+                      color: selectedAssets[ticker]?.color || '#94a3b8',
+                    }))
+                    .filter((d) => d.value > 0)
+                    .sort((a, b) => b.value - a.value);
+                  const total = pieData.reduce((s, d) => s + d.value, 0);
+                  return pieData.length > 0 ? (
+                    <div className="h-full flex items-center">
+                      <div className="flex-1 h-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie
+                              data={pieData}
+                              cx="50%"
+                              cy="50%"
+                              innerRadius="55%"
+                              outerRadius="85%"
+                              paddingAngle={2}
+                              dataKey="value"
+                              stroke="none"
+                              activeIndex={-1}
+                              isAnimationActive={false}
+                            >
+                              {pieData.map((entry, i) => (
+                                <Cell key={i} fill={entry.color} />
+                              ))}
+                            </Pie>
+                            <Tooltip
+                              contentStyle={{ borderRadius: '16px', border: dark ? '1px solid #e2e8f0' : '1px solid #1e293b', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '12px 16px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
+                              itemStyle={{ fontSize: '12px', fontWeight: 'bold', color: dark ? '#e2e8f0' : '#1e293b' }}
+                              formatter={(v) => [formatCurrency(v)]}
+                            />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      </div>
+                      <div className="w-48 space-y-2 pr-2">
+                        {pieData.map((d, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[10px] font-bold truncate text-slate-500 dark:text-slate-400">{d.name}</p>
+                              <p className="text-xs font-black">{formatCurrency(d.value)} <span className="text-slate-400 font-bold">({(d.value / total * 100).toFixed(1)}%)</span></p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-full flex items-center justify-center text-slate-400">
+                      <p className="font-bold text-sm">No active holdings to display</p>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
