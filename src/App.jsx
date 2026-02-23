@@ -36,7 +36,7 @@ const formatShortDate = (d) =>
 
 const fiveYearsAgo = new Date();
 fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
-const DEFAULT_AMOUNT = 10000;
+const DEFAULT_AMOUNT = 1000;
 const TODAY = new Date().toISOString().split('T')[0];
 
 const MONTHS_MAP = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
@@ -245,9 +245,8 @@ const App = () => {
   // ─── Modal helpers ─────────────────────────────────────────────────────────
 
   const openBuyModal = useCallback(() => {
-    const lastBuy = [...transactions].reverse().find((tx) => tx.type === 'buy');
-    setModalAmount(lastBuy?.amount ?? DEFAULT_AMOUNT);
-    setModalDate(lastBuy?.date ?? fiveYearsAgo.toISOString().split('T')[0]);
+    setModalAmount(DEFAULT_AMOUNT);
+    setModalDate(TODAY);
     setStagedAsset(null);
     setModalMode('buy');
   }, [transactions]);
@@ -262,9 +261,8 @@ const App = () => {
   const openBuyForTicker = useCallback((ticker) => {
     const asset = selectedAssets[ticker];
     if (!asset) return;
-    const lastBuy = [...transactions].reverse().find((tx) => tx.type === 'buy' && tx.ticker === ticker);
-    setModalAmount(lastBuy?.amount ?? DEFAULT_AMOUNT);
-    setModalDate(lastBuy?.date ?? fiveYearsAgo.toISOString().split('T')[0]);
+    setModalAmount(DEFAULT_AMOUNT);
+    setModalDate(TODAY);
     setStagedAsset({ symbol: ticker, name: asset.name });
     setModalMode('buy');
   }, [selectedAssets, transactions]);
