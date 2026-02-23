@@ -145,9 +145,10 @@ const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [hiddenSeries, setHiddenSeries] = useState(new Set());
   const [showMarkers, setShowMarkers] = useState(true);
-  const [chartPage, setChartPage] = useState(0); // 0 = line, 1 = pie, 2 = deposits vs value, 3 = returns by asset, 4 = drawdown
+  const [chartPage, setChartPage] = useState(0); // 0 = performance, 1 = line, 2 = pie, 3 = deposits vs value, 4 = returns by asset
   const CHART_PAGES = 5;
   const [pieMode, setPieMode] = useState(0); // 0 = allocation, 1 = return
+  const [perfMode, setPerfMode] = useState(0); // 0 = %, 1 = $
   const [dark, setDark] = useState(() => {
     try { return localStorage.getItem('investo-dark') === 'true'; } catch { return false; }
   });
@@ -1188,16 +1189,33 @@ const App = () => {
               <div className="flex justify-between items-start mb-8 relative z-10">
                 <div>
                   <h2 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">
-                    {['Portfolio Performance', 'Allocation', 'Deposits vs Value', 'Returns by Asset', 'Drawdown'][chartPage]}
+                    {['Performance', 'Transaction History', 'Allocation', 'Deposits vs Value', 'Returns by Asset'][chartPage]}
                   </h2>
                   <p className="text-sm text-slate-400 italic font-medium">
-                    {chartPage === 1
+                    {chartPage === 2
                       ? (pieMode === 0 ? 'Current portfolio breakdown' : 'Return contribution per asset')
-                      : ['Historical data from Yahoo Finance', '', 'Invested capital vs portfolio value', 'Profit & loss per asset', 'Peak-to-trough decline over time'][chartPage]}
+                      : ['Return over time', 'Historical data from Yahoo Finance', '', 'Invested capital vs portfolio value', 'Profit & loss per asset'][chartPage]}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {chartPage === 0 && chartData.length > 0 && transactions.length > 0 && (
+                  {chartPage === 0 && chartData.length > 0 && (
+                    <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
+                      {['%', '$'].map((label, i) => (
+                        <button
+                          key={label}
+                          onClick={() => setPerfMode(i)}
+                          className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${
+                            perfMode === i
+                              ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
+                              : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {chartPage === 1 && chartData.length > 0 && transactions.length > 0 && (
                     <button
                       onClick={() => setShowMarkers((v) => !v)}
                       className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
@@ -1205,7 +1223,7 @@ const App = () => {
                       {showMarkers ? '● Markers On' : '○ Markers Off'}
                     </button>
                   )}
-                  {chartPage === 1 && chartData.length > 0 && (
+                  {chartPage === 2 && chartData.length > 0 && (
                     <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
                       {['Allocation', 'Return'].map((label, i) => (
                         <button
@@ -1257,7 +1275,49 @@ const App = () => {
                       <p className="text-sm">Record purchases to start simulating</p>
                     </div>
                   </div>
-                ) : chartPage === 0 ? (
+                ) : chartPage === 0 ? (() => {
+                  // Performance — return over time
+                  const sortedTx = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+                  const depositMap = new Map();
+                  let cumDeposits = 0;
+                  let cumWithdrawals = 0;
+                  sortedTx.forEach((tx) => {
+                    if (tx.type === 'buy') cumDeposits += tx.amount;
+                    else cumWithdrawals += tx.amount;
+                    depositMap.set(tx.date, { deposits: cumDeposits, withdrawals: cumWithdrawals });
+                  });
+                  let lastDep = 0;
+                  let lastWith = 0;
+                  const perfData = chartData.map((p) => {
+                    const d = depositMap.get(p.date);
+                    if (d) { lastDep = d.deposits; lastWith = d.withdrawals; }
+                    const pv = p['Total Portfolio'] ?? 0;
+                    const pnl = pv + lastWith - lastDep;
+                    const pct = lastDep > 0 ? (pnl / lastDep) * 100 : 0;
+                    return { date: p.date, 'Return %': Math.round(pct * 100) / 100, 'Return $': Math.round(pnl) };
+                  }).filter((d) => d['Return %'] !== 0 || d['Return $'] !== 0);
+                  const isPct = perfMode === 0;
+                  const dataKey = isPct ? 'Return %' : 'Return $';
+                  return (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={perfData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} minTickGap={60}
+                          tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })} />
+                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
+                          tickFormatter={isPct ? (v) => `${v >= 0 ? '+' : ''}${v.toFixed(0)}%` : (v) => `${v >= 0 ? '+' : ''}${formatCurrency(v)}`} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
+                          itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                          formatter={(v) => isPct ? [`${v >= 0 ? '+' : ''}${v.toFixed(2)}%`] : [`${v >= 0 ? '+' : ''}${formatCurrency(v)}`]}
+                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+                        <ReferenceLine y={0} stroke={dark ? '#475569' : '#cbd5e1'} strokeWidth={1} />
+                        <Area type="monotone" dataKey={dataKey} stroke="#3b82f6" strokeWidth={2} dot={false} fill="none" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  );
+                })()
+                : chartPage === 1 ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
@@ -1327,7 +1387,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                       ))}
                     </LineChart>
                   </ResponsiveContainer>
-                ) : chartPage === 1 ? (() => {
+                ) : chartPage === 2 ? (() => {
                   const lastPoint = chartData[chartData.length - 1];
                   let pieData, total, isReturnMode = pieMode === 1;
                   if (!isReturnMode) {
@@ -1420,7 +1480,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   );
                 })()
 
-                : chartPage === 2 ? (() => {
+                : chartPage === 3 ? (() => {
                   // Deposits vs Value — area chart
                   const sortedTx = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
                   const depositMap = new Map();
@@ -1463,8 +1523,8 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   );
                 })()
 
-                : chartPage === 3 ? (() => {
-                  // Returns by Asset — horizontal bar chart
+                : (() => {
+                  // Returns by Asset — bar chart (page 4)
                   const lastPoint = chartData[chartData.length - 1];
                   const barData = chartTickers
                     .map((ticker) => {
@@ -1500,37 +1560,6 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                           ))}
                         </Bar>
                       </RBarChart>
-                    </ResponsiveContainer>
-                  );
-                })()
-
-                : (() => {
-                  // Drawdown chart — % decline from peak
-                  let peak = 0;
-                  const ddData = chartData
-                    .filter((p) => p['Total Portfolio'] != null)
-                    .map((p) => {
-                      const v = p['Total Portfolio'];
-                      if (v > peak) peak = v;
-                      const dd = peak > 0 ? ((v - peak) / peak) * 100 : 0;
-                      return { date: p.date, Drawdown: Math.round(dd * 100) / 100 };
-                    });
-                  return (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={ddData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
-                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} minTickGap={60}
-                          tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })} />
-                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
-                          tickFormatter={(v) => `${v}%`} domain={['dataMin', 0]} />
-                        <Tooltip
-                          contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
-                          itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
-                          formatter={(v) => [`${v.toFixed(2)}%`]}
-                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
-                        <ReferenceLine y={0} stroke={dark ? '#475569' : '#cbd5e1'} strokeWidth={1} />
-                        <Area type="monotone" dataKey="Drawdown" stroke="#ef4444" fill="#ef4444" fillOpacity={0.15} strokeWidth={2} dot={false} />
-                      </AreaChart>
                     </ResponsiveContainer>
                   );
                 })()}
