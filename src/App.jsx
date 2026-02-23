@@ -3,6 +3,8 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, ReferenceDot,
   PieChart, Pie, Cell,
+  AreaChart, Area,
+  BarChart as RBarChart, Bar, ReferenceLine,
 } from 'recharts';
 import {
   BarChart3, ArrowUpRight, ArrowDownRight,
@@ -143,7 +145,9 @@ const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [hiddenSeries, setHiddenSeries] = useState(new Set());
   const [showMarkers, setShowMarkers] = useState(true);
-  const [chartPage, setChartPage] = useState(0); // 0 = line chart, 1 = pie chart
+  const [chartPage, setChartPage] = useState(0); // 0 = line, 1 = pie, 2 = deposits vs value, 3 = returns by asset, 4 = drawdown
+  const CHART_PAGES = 5;
+  const [pieMode, setPieMode] = useState(0); // 0 = allocation, 1 = return
   const [dark, setDark] = useState(() => {
     try { return localStorage.getItem('investo-dark') === 'true'; } catch { return false; }
   });
@@ -1185,8 +1189,14 @@ const App = () => {
             <div className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 h-[550px] flex flex-col overflow-hidden relative">
               <div className="flex justify-between items-start mb-8 relative z-10">
                 <div>
-                  <h2 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">{chartPage === 0 ? 'Portfolio Performance' : 'Allocation'}</h2>
-                  <p className="text-sm text-slate-400 italic font-medium">{chartPage === 0 ? 'Historical data from Yahoo Finance' : 'Current portfolio breakdown'}</p>
+                  <h2 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">
+                    {['Portfolio Performance', 'Allocation', 'Deposits vs Value', 'Returns by Asset', 'Drawdown'][chartPage]}
+                  </h2>
+                  <p className="text-sm text-slate-400 italic font-medium">
+                    {chartPage === 1
+                      ? (pieMode === 0 ? 'Current portfolio breakdown' : 'Return contribution per asset')
+                      : ['Historical data from Yahoo Finance', '', 'Invested capital vs portfolio value', 'Profit & loss per asset', 'Peak-to-trough decline over time'][chartPage]}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   {chartPage === 0 && chartData.length > 0 && transactions.length > 0 && (
@@ -1197,17 +1207,34 @@ const App = () => {
                       {showMarkers ? '● Markers On' : '○ Markers Off'}
                     </button>
                   )}
+                  {chartPage === 1 && chartData.length > 0 && (
+                    <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
+                      {['Allocation', 'Return'].map((label, i) => (
+                        <button
+                          key={label}
+                          onClick={() => setPieMode(i)}
+                          className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${
+                            pieMode === i
+                              ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
+                              : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {chartData.length > 0 && chartTickers.length > 0 && (
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => setChartPage((p) => (p === 0 ? 1 : 0))}
+                      onClick={() => setChartPage((p) => (p - 1 + CHART_PAGES) % CHART_PAGES)}
                         className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
                       >
                         <ChevronLeft className="w-4 h-4" />
                       </button>
-                      <span className="text-[10px] font-bold text-slate-400 w-8 text-center">{chartPage + 1}/2</span>
+                      <span className="text-[10px] font-bold text-slate-400 w-8 text-center">{chartPage + 1}/{CHART_PAGES}</span>
                       <button
-                        onClick={() => setChartPage((p) => (p === 0 ? 1 : 0))}
+                        onClick={() => setChartPage((p) => (p + 1) % CHART_PAGES)}
                         className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
                       >
                         <ChevronRight className="w-4 h-4" />
@@ -1302,17 +1329,39 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                       ))}
                     </LineChart>
                   </ResponsiveContainer>
-                ) : (() => {
+                ) : chartPage === 1 ? (() => {
                   const lastPoint = chartData[chartData.length - 1];
-                  const pieData = chartTickers
-                    .map((ticker) => ({
-                      name: `${selectedAssets[ticker]?.name || ticker} (${ticker})`,
-                      value: lastPoint?.[ticker] ?? 0,
-                      color: selectedAssets[ticker]?.color || '#94a3b8',
-                    }))
-                    .filter((d) => d.value > 0)
-                    .sort((a, b) => b.value - a.value);
-                  const total = pieData.reduce((s, d) => s + d.value, 0);
+                  let pieData, total, isReturnMode = pieMode === 1;
+                  if (!isReturnMode) {
+                    pieData = chartTickers
+                      .map((ticker) => ({
+                        name: `${selectedAssets[ticker]?.name || ticker} (${ticker})`,
+                        value: lastPoint?.[ticker] ?? 0,
+                        color: selectedAssets[ticker]?.color || '#94a3b8',
+                      }))
+                      .filter((d) => d.value > 0)
+                      .sort((a, b) => b.value - a.value);
+                    total = pieData.reduce((s, d) => s + d.value, 0);
+                  } else {
+                    pieData = chartTickers
+                      .map((ticker) => {
+                        const txs = transactions.filter((tx) => tx.ticker === ticker);
+                        const deps = txs.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
+                        const withs = txs.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0);
+                        const fv = lastPoint?.[ticker] ?? 0;
+                        const pnl = fv + withs - deps;
+                        return {
+                          name: `${selectedAssets[ticker]?.name || ticker} (${ticker})`,
+                          value: Math.abs(pnl),
+                          rawPnl: pnl,
+                          color: pnl >= 0 ? '#10b981' : '#ef4444',
+                          assetColor: selectedAssets[ticker]?.color || '#94a3b8',
+                        };
+                      })
+                      .filter((d) => d.value > 0)
+                      .sort((a, b) => b.value - a.value);
+                    total = pieData.reduce((s, d) => s + d.value, 0);
+                  }
                   return pieData.length > 0 ? (
                     <div className="h-full flex items-center">
                       <div className="flex-1 h-full">
@@ -1337,7 +1386,13 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                             <Tooltip
                               contentStyle={{ borderRadius: '16px', border: dark ? '1px solid #e2e8f0' : '1px solid #1e293b', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '12px 16px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
                               itemStyle={{ fontSize: '12px', fontWeight: 'bold', color: dark ? '#e2e8f0' : '#1e293b' }}
-                              formatter={(v) => [formatCurrency(v)]}
+                              formatter={(v, _name, entry) => {
+                                if (isReturnMode) {
+                                  const raw = entry.payload.rawPnl;
+                                  return [`${raw >= 0 ? '+' : ''}${formatCurrency(raw)}`];
+                                }
+                                return [formatCurrency(v)];
+                              }}
                             />
                           </PieChart>
                         </ResponsiveContainer>
@@ -1345,10 +1400,16 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                       <div className="w-48 space-y-2 pr-2">
                         {pieData.map((d, i) => (
                           <div key={i} className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                            <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: isReturnMode ? d.assetColor : d.color }} />
                             <div className="min-w-0 flex-1">
                               <p className="text-[10px] font-bold truncate text-slate-500 dark:text-slate-400">{d.name}</p>
-                              <p className="text-xs font-black">{formatCurrency(d.value)} <span className="text-slate-400 font-bold">({(d.value / total * 100).toFixed(1)}%)</span></p>
+                              {isReturnMode ? (
+                                <p className={`text-xs font-black ${d.rawPnl >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                  {d.rawPnl >= 0 ? '+' : ''}{formatCurrency(d.rawPnl)} <span className="text-slate-400 font-bold">({(d.value / total * 100).toFixed(1)}%)</span>
+                                </p>
+                              ) : (
+                                <p className="text-xs font-black">{formatCurrency(d.value)} <span className="text-slate-400 font-bold">({(d.value / total * 100).toFixed(1)}%)</span></p>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -1356,8 +1417,123 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                     </div>
                   ) : (
                     <div className="h-full flex items-center justify-center text-slate-400">
-                      <p className="font-bold text-sm">No active holdings to display</p>
+                      <p className="font-bold text-sm">{isReturnMode ? 'No returns to display' : 'No active holdings to display'}</p>
                     </div>
+                  );
+                })()
+
+                : chartPage === 2 ? (() => {
+                  // Deposits vs Value — area chart
+                  const sortedTx = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+                  const depositMap = new Map();
+                  let cumDeposits = 0;
+                  let cumWithdrawals = 0;
+                  sortedTx.forEach((tx) => {
+                    if (tx.type === 'buy') cumDeposits += tx.amount;
+                    else cumWithdrawals += tx.amount;
+                    depositMap.set(tx.date, { deposits: cumDeposits, withdrawals: cumWithdrawals });
+                  });
+                  let lastDep = 0;
+                  let lastWith = 0;
+                  const areaData = chartData.map((p) => {
+                    const d = depositMap.get(p.date);
+                    if (d) { lastDep = d.deposits; lastWith = d.withdrawals; }
+                    return {
+                      date: p.date,
+                      'Portfolio Value': p['Total Portfolio'] ?? 0,
+                      'Net Invested': Math.max(0, lastDep - lastWith),
+                    };
+                  });
+                  return (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={areaData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} minTickGap={60}
+                          tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })} />
+                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
+                          tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
+                          itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                          formatter={(v) => [formatCurrency(v)]}
+                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+                        <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', color: dark ? '#94a3b8' : undefined }} />
+                        <Area type="monotone" dataKey="Portfolio Value" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} strokeWidth={2} dot={false} />
+                        <Area type="stepAfter" dataKey="Net Invested" stroke="#94a3b8" fill="#94a3b8" fillOpacity={0.08} strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  );
+                })()
+
+                : chartPage === 3 ? (() => {
+                  // Returns by Asset — horizontal bar chart
+                  const lastPoint = chartData[chartData.length - 1];
+                  const barData = chartTickers
+                    .map((ticker) => {
+                      const txs = transactions.filter((tx) => tx.ticker === ticker);
+                      const deposits = txs.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
+                      const withdrawals = txs.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0);
+                      const fv = lastPoint?.[ticker] ?? 0;
+                      const pnl = fv + withdrawals - deposits;
+                      return {
+                        name: selectedAssets[ticker]?.name || ticker,
+                        ticker,
+                        pnl: Math.round(pnl),
+                        color: selectedAssets[ticker]?.color || '#94a3b8',
+                      };
+                    })
+                    .sort((a, b) => b.pnl - a.pnl);
+                  return (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RBarChart data={barData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
+                        <XAxis dataKey="name" tick={{ fontSize: 11, fill: dark ? '#e2e8f0' : '#334155', fontWeight: 700 }} axisLine={false} tickLine={false} />
+                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
+                          tickFormatter={(v) => `${v >= 0 ? '+' : ''}${formatCurrency(v)}`} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
+                          itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                          formatter={(v) => [`${v >= 0 ? '+' : ''}${formatCurrency(v)}`, 'P&L']}
+                          cursor={{ fill: dark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }} />
+                        <ReferenceLine y={0} stroke={dark ? '#475569' : '#cbd5e1'} strokeWidth={1} />
+                        <Bar dataKey="pnl" radius={[6, 6, 0, 0]}>
+                          {barData.map((entry, i) => (
+                            <Cell key={i} fill={entry.pnl >= 0 ? '#10b981' : '#ef4444'} />
+                          ))}
+                        </Bar>
+                      </RBarChart>
+                    </ResponsiveContainer>
+                  );
+                })()
+
+                : (() => {
+                  // Drawdown chart — % decline from peak
+                  let peak = 0;
+                  const ddData = chartData
+                    .filter((p) => p['Total Portfolio'] != null)
+                    .map((p) => {
+                      const v = p['Total Portfolio'];
+                      if (v > peak) peak = v;
+                      const dd = peak > 0 ? ((v - peak) / peak) * 100 : 0;
+                      return { date: p.date, Drawdown: Math.round(dd * 100) / 100 };
+                    });
+                  return (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={ddData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} minTickGap={60}
+                          tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })} />
+                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
+                          tickFormatter={(v) => `${v}%`} domain={['dataMin', 0]} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
+                          itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                          formatter={(v) => [`${v.toFixed(2)}%`]}
+                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+                        <ReferenceLine y={0} stroke={dark ? '#475569' : '#cbd5e1'} strokeWidth={1} />
+                        <Area type="monotone" dataKey="Drawdown" stroke="#ef4444" fill="#ef4444" fillOpacity={0.15} strokeWidth={2} dot={false} />
+                      </AreaChart>
+                    </ResponsiveContainer>
                   );
                 })()}
               </div>
