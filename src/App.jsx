@@ -13,8 +13,9 @@ import {
   PanelLeftClose, PanelLeftOpen,
   ShoppingCart, TrendingDown, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
   LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Share2, Camera, Check, Link, ExternalLink,
 } from 'lucide-react';
+import { toPng } from 'html-to-image';
 import { searchTickers, fetchPrices } from './api';
 import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
@@ -115,6 +116,96 @@ const parseNaturalTx = (text) => {
   return { type, amount, date, asset, sellAll, sellFraction };
 };
 
+// Compose a polished share image with premium styling
+const composeShareImage = (rawBlob, isDark) =>
+  new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const pad = 80;
+      const radius = 32;
+      const brandH = 56;
+      const w = img.width + pad * 2;
+      const h = img.height + pad * 2 + brandH;
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext('2d');
+
+      // Rich gradient background
+      const bgGrad = ctx.createLinearGradient(0, 0, w, h);
+      if (isDark) {
+        bgGrad.addColorStop(0, '#0c1222');
+        bgGrad.addColorStop(0.3, '#141e33');
+        bgGrad.addColorStop(0.7, '#111827');
+        bgGrad.addColorStop(1, '#0c1222');
+      } else {
+        bgGrad.addColorStop(0, '#c7d2fe');
+        bgGrad.addColorStop(0.3, '#e0e7ff');
+        bgGrad.addColorStop(0.7, '#ddd6fe');
+        bgGrad.addColorStop(1, '#c7d2fe');
+      }
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, w, h);
+
+      // Subtle radial glow behind the card
+      const glow = ctx.createRadialGradient(w / 2, h * 0.4, 0, w / 2, h * 0.4, w * 0.6);
+      if (isDark) {
+        glow.addColorStop(0, 'rgba(59,130,246,0.08)');
+        glow.addColorStop(0.5, 'rgba(139,92,246,0.04)');
+        glow.addColorStop(1, 'transparent');
+      } else {
+        glow.addColorStop(0, 'rgba(99,102,241,0.12)');
+        glow.addColorStop(0.5, 'rgba(139,92,246,0.06)');
+        glow.addColorStop(1, 'transparent');
+      }
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, w, h);
+
+      // Card shadow (double layer for depth)
+      ctx.save();
+      ctx.shadowColor = isDark ? 'rgba(0,0,0,0.6)' : 'rgba(0,0,0,0.15)';
+      ctx.shadowBlur = 60;
+      ctx.shadowOffsetY = 20;
+      ctx.beginPath();
+      ctx.roundRect(pad, pad, img.width, img.height, radius);
+      ctx.fillStyle = isDark ? '#1e293b' : '#ffffff';
+      ctx.fill();
+      ctx.restore();
+
+      // Draw screenshot with rounded clip
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(pad, pad, img.width, img.height, radius);
+      ctx.clip();
+      ctx.drawImage(img, pad, pad);
+      ctx.restore();
+
+      // Subtle border on card
+      ctx.beginPath();
+      ctx.roundRect(pad, pad, img.width, img.height, radius);
+      ctx.strokeStyle = isDark ? 'rgba(148,163,184,0.1)' : 'rgba(99,102,241,0.15)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Branding bar
+      const brandY = h - brandH + 8;
+      ctx.textAlign = 'center';
+      // App name
+      const fontSize = Math.round(w * 0.022);
+      ctx.font = `800 ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.fillStyle = isDark ? 'rgba(148,163,184,0.35)' : 'rgba(100,116,139,0.3)';
+      ctx.fillText('INVESTO', w / 2, brandY + fontSize * 0.4);
+      // Accent dot
+      ctx.beginPath();
+      ctx.arc(w / 2 - fontSize * 2.8, brandY + fontSize * 0.12, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#3b82f6';
+      ctx.fill();
+
+      c.toBlob((blob) => resolve(blob), 'image/png');
+    };
+    img.src = URL.createObjectURL(rawBlob);
+  });
+
 const LS_KEY = 'investo-portfolio';
 let savedPortfolio = null;
 try {
@@ -174,6 +265,13 @@ const App = () => {
   const isHydratingRef = useRef(false);
 
   const [colorPickerTicker, setColorPickerTicker] = useState(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareStatus, setShareStatus] = useState(null); // 'capturing' | 'done' | 'error' | null
+  const [shareResult, setShareResult] = useState(null); // { url, blob }
+
+  const chartRef = useRef(null);
+  const statsRef = useRef(null);
+  const tableRef = useRef(null);
 
   const colorIdx = useRef(savedPortfolio?.colorIdx || 0);
   const fetchedRangesRef = useRef({});  // { ticker: startDate } — tracks what we've already fetched
@@ -1185,7 +1283,7 @@ const App = () => {
           <main className={`${sidebarOpen ? 'lg:col-span-8' : 'lg:col-span-12'} space-y-8`}>
 
             {/* Chart */}
-            <div className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 h-[550px] flex flex-col overflow-hidden relative">
+            <div ref={chartRef} className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 h-[550px] flex flex-col overflow-hidden relative">
               <div className="flex justify-between items-start mb-8 relative z-10">
                 <div>
                   <h2 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">
@@ -1197,7 +1295,7 @@ const App = () => {
                       : ['Return over time', 'Historical data from Yahoo Finance', '', 'Invested capital vs portfolio value', 'Profit & loss per asset'][chartPage]}
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" data-share-hide>
                   {chartPage === 0 && chartData.length > 0 && (
                     <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
                       {['%', '$'].map((label, i) => (
@@ -1239,6 +1337,17 @@ const App = () => {
                         </button>
                       ))}
                     </div>
+                  )}
+                  {chartData.length > 0 && stats.length > 0 && (
+                    <button
+                      onClick={() => {
+                        setShareOpen(true);
+                      }}
+                      className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
+                      title="Share"
+                    >
+                      <Share2 className="w-4 h-4" />
+                    </button>
                   )}
                   {chartData.length > 0 && chartTickers.length > 0 && (
                     <div className="flex items-center gap-1">
@@ -1571,7 +1680,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
               const portfolio = stats.find((s) => s.isPortfolio);
               const assets = stats.filter((s) => !s.isPortfolio);
               return (
-                <div className="space-y-6">
+                <div ref={statsRef} className="space-y-6">
                   {portfolio && (
                     <div className="p-6 rounded-[2rem] border bg-slate-900 text-white border-slate-800 shadow-2xl transition-all hover:translate-y-[-4px]">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1628,7 +1737,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
 
         {/* Summary Table — full width */}
         {stats.length > 0 && (
-          <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <div ref={tableRef} className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
             <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/20 dark:bg-slate-800/20">
               <h2 className="text-xl font-black tracking-tight text-slate-800 dark:text-slate-100 flex items-center gap-2 uppercase">
                 <History className="w-5 h-5 text-slate-400" /> Summary
@@ -2035,7 +2144,141 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
         </div>
       )}
 
-      {/* ── Footer ──────────────────────────────────────────────────────── */}
+      {/* ── Share Modal ────────────────────────────────────────────────────────── */}
+      {shareOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={() => { setShareOpen(false); setShareStatus(null); setShareResult(null); }}>
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-sm mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 flex items-center gap-2">
+                <Camera className="w-4 h-4" /> Share Your Portfolio
+              </h3>
+              <button onClick={() => { setShareOpen(false); setShareStatus(null); setShareResult(null); }} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            {shareResult ? (
+              <div className="space-y-3">
+                {shareResult.url && (
+                  <div className="flex items-center gap-2 rounded-xl bg-slate-100 dark:bg-slate-700 px-3 py-2.5 border border-slate-200 dark:border-slate-600">
+                    <Link className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                    <input
+                      readOnly
+                      value={shareResult.url}
+                      className="flex-1 bg-transparent text-xs font-mono text-slate-600 dark:text-slate-300 outline-none select-all truncate"
+                      onFocus={(e) => e.target.select()}
+                    />
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  {shareResult.url && (
+                    <button
+                      onClick={async () => {
+                        await navigator.clipboard.writeText(shareResult.url);
+                        setShareStatus('done');
+                        setTimeout(() => setShareStatus(null), 2000);
+                      }}
+                      className="flex-1 py-2.5 rounded-2xl font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      {shareStatus === 'done' ? <><Check className="w-4 h-4" /> Copied!</> : <><Link className="w-4 h-4" /> Copy Link</>}
+                    </button>
+                  )}
+                  {navigator.share && (
+                    <button
+                      onClick={async () => {
+                        const file = new File([shareResult.blob], 'portfolio.png', { type: 'image/png' });
+                        try {
+                          if (navigator.canShare?.({ files: [file] })) {
+                            await navigator.share({ files: [file], title: 'My Portfolio' });
+                          } else if (shareResult.url) {
+                            await navigator.share({ url: shareResult.url, title: 'My Portfolio' });
+                          }
+                        } catch { /* user cancelled */ }
+                      }}
+                      className={`${shareResult.url ? '' : 'flex-1 '}py-2.5 px-4 rounded-2xl font-bold text-sm text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2`}
+                    >
+                      <Share2 className="w-4 h-4" /> Share
+                    </button>
+                  )}
+                  {shareResult.url && (
+                    <a
+                      href={shareResult.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="py-2.5 px-3 rounded-2xl font-bold text-sm text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all active:scale-95 flex items-center"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </a>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {[
+                  { label: 'Current Chart', ref: chartRef, icon: BarChart3, desc: 'Performance & chart view' },
+                  { label: 'Stats Cards', ref: statsRef, icon: DollarSign, desc: 'Portfolio value & returns' },
+                  { label: 'Summary Table', ref: tableRef, icon: FileText, desc: 'Asset breakdown table' },
+                ].map(({ label, ref, icon: Icon, desc }) => (
+                  <button
+                    key={label}
+                    disabled={shareStatus === 'capturing' || !ref.current}
+                    onClick={async () => {
+                      setShareStatus('capturing');
+                      try {
+                        // Hide controls during capture
+                        const hideEls = ref.current.querySelectorAll('[data-share-hide]');
+                        hideEls.forEach((el) => { el.style.display = 'none'; });
+                        const dataUrl = await toPng(ref.current, {
+                          backgroundColor: dark ? '#0f172a' : '#ffffff',
+                          pixelRatio: 2,
+                        });
+                        hideEls.forEach((el) => { el.style.display = ''; });
+                        const res = await fetch(dataUrl);
+                        const rawBlob = await res.blob();
+                        const blob = await composeShareImage(rawBlob, dark);
+                        let publicUrl = null;
+                        // Upload to Supabase Storage for shareable link
+                        if (supabase) {
+                          const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.png`;
+                          const { error } = await supabase.storage.from('screenshots').upload(fileName, blob, {
+                            contentType: 'image/png',
+                            cacheControl: '31536000',
+                          });
+                          if (!error) {
+                            publicUrl = `${window.location.origin}/s/${fileName}`;
+                          }
+                        }
+                        setShareResult({ url: publicUrl, blob });
+                        setShareStatus(null);
+                      } catch (err) {
+                        console.error('Share capture error:', err);
+                        setShareStatus('error');
+                        setTimeout(() => setShareStatus(null), 2000);
+                      }
+                    }}
+                    className="w-full flex items-center gap-4 px-4 py-3.5 rounded-2xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-all text-left disabled:opacity-50 border border-slate-200 dark:border-slate-600"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center flex-shrink-0">
+                      <Icon className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm font-bold block">{label}</span>
+                      <span className="text-[11px] text-slate-400 font-medium">{desc}</span>
+                    </div>
+                    {shareStatus === 'capturing' && <Loader2 className="w-4 h-4 animate-spin text-blue-500 flex-shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            )}
+            {shareStatus === 'error' && (
+              <div className="flex items-center gap-2 text-rose-500 text-xs font-bold">
+                <AlertCircle className="w-4 h-4" /> Failed to capture. Try again.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Footer ────────────────────────────────────────────────────────────── */}
       <div className="border-t border-slate-200 dark:border-slate-700 mt-8" />
       <footer className="flex items-center justify-center gap-4 pt-4 pb-8 text-xs font-bold text-slate-400">
         <a href="https://github.com/sdaveas/investo-js" target="_blank" rel="noopener noreferrer"
