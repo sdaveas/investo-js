@@ -165,6 +165,8 @@ const App = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const isHydratingRef = useRef(false);
 
+  const [colorPickerTicker, setColorPickerTicker] = useState(null);
+
   const colorIdx = useRef(savedPortfolio?.colorIdx || 0);
   const fetchedRangesRef = useRef({});  // { ticker: startDate } — tracks what we've already fetched
 
@@ -749,9 +751,9 @@ const App = () => {
     const globalStart = transactions.reduce(
       (min, tx) => (tx.date < min ? tx.date : min), transactions[0].date,
     );
-    // Pad start by 7 days so forward-fill covers weekend/holiday buy dates
+    // Pad start by 30 days so chart shows context before first transaction
     const padded = new Date(globalStart);
-    padded.setDate(padded.getDate() - 7);
+    padded.setDate(padded.getDate() - 30);
     const fetchStart = padded.toISOString().split('T')[0];
 
     const dateRanges = {};
@@ -893,19 +895,33 @@ const App = () => {
               return (
               <div className="hidden sm:flex items-center gap-4">
                 <div className="text-right">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total Deposits</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Deposits</p>
                   <p className="text-lg font-black text-blue-600">{formatCurrency(totalDeposits)}</p>
                 </div>
+                {totalWithdrawals > 0 && (
+                <>
+                  <div className="w-px h-8 bg-slate-200 dark:bg-slate-700" />
+                  <div className="text-right">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Withdrawals</p>
+                    <p className="text-lg font-black text-blue-600">{formatCurrency(totalWithdrawals)}</p>
+                  </div>
+                </>
+                )}
                 {currentBalance > 0 && (
                 <>
-                  <div className="w-px h-8 bg-slate-200" />
+                  <div className="w-px h-8 bg-slate-200 dark:bg-slate-700" />
                   <div className="text-right">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Balance</p>
                     <p className={`text-lg font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(currentBalance)}</p>
                   </div>
-                  <span className={`text-xs font-black px-2 py-1 rounded-lg ${isPositive ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-600' : 'bg-rose-50 dark:bg-rose-950 text-rose-600'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</span>
                 </>
                 )}
+                <div className="w-px h-8 bg-slate-200 dark:bg-slate-700" />
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Return</p>
+                  <p className={`text-lg font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>{isPositive ? '+' : ''}{formatCurrency(pnl)}</p>
+                </div>
+                <span className={`text-xs font-black px-2 py-1 rounded-lg ${isPositive ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-600' : 'bg-rose-50 dark:bg-rose-950 text-rose-600'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</span>
               </div>
               );
             })()}
@@ -1031,7 +1047,29 @@ const App = () => {
                   return (
                     <div key={ticker} className="space-y-1.5">
                       <div className="flex items-center gap-2 mb-1">
-                        <div className="w-1.5 h-4 rounded-full" style={{ backgroundColor: asset.color }} />
+                        <div className="relative">
+                          <button
+                            onClick={() => setColorPickerTicker((prev) => prev === ticker ? null : ticker)}
+                            className="w-1.5 h-4 rounded-full cursor-pointer hover:scale-150 transition-transform"
+                            style={{ backgroundColor: asset.color }}
+                            title="Change color"
+                          />
+                          {colorPickerTicker === ticker && (
+                            <div className="absolute left-4 top-0 z-50 flex gap-1.5 p-2 rounded-xl bg-slate-800 border border-slate-700 shadow-xl">
+                              {COLORS.map((c) => (
+                                <button
+                                  key={c}
+                                  onClick={() => {
+                                    setSelectedAssets((prev) => ({ ...prev, [ticker]: { ...prev[ticker], color: c } }));
+                                    setColorPickerTicker(null);
+                                  }}
+                                  className={`w-5 h-5 rounded-full transition-transform hover:scale-125 ${asset.color === c ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-800' : ''}`}
+                                  style={{ backgroundColor: c }}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex-1 truncate">{asset.name} ({ticker})</p>
                         <button onClick={() => openBuyForTicker(ticker)} className="p-1 rounded-lg bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 transition-colors" title="Record buy">
                           <Plus className="w-3 h-3" />
@@ -1072,6 +1110,17 @@ const App = () => {
                     </div>
                     <p className="text-[10px] font-bold text-white/30">{transactions.length} tx · {selectedTickers.length} asset{selectedTickers.length !== 1 ? 's' : ''}</p>
                   </div>
+                  {totalWithdrawals > 0 && (
+                  <>
+                    <div className="border-t border-white/10" />
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Total Withdrawals</p>
+                        <p className="text-xl font-black text-emerald-400">{formatCurrency(totalWithdrawals)}</p>
+                      </div>
+                    </div>
+                  </>
+                  )}
                   {currentBalance > 0 && (
                   <>
                     <div className="border-t border-white/10" />
@@ -1087,6 +1136,14 @@ const App = () => {
                     </div>
                   </>
                   )}
+                  <div className="border-t border-white/10" />
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Total Return</p>
+                      <p className={`text-xl font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{isPositive ? '+' : ''}{formatCurrency(pnl)}</p>
+                    </div>
+                    <span className={`text-xs font-black px-2 py-1 rounded-lg ${isPositive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</span>
+                  </div>
                 </div>
                 );
               })()}
@@ -1286,74 +1343,75 @@ tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
               );
             })()}
 
-            {/* Summary Table */}
-            {stats.length > 0 && (
-              <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-                <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/20 dark:bg-slate-800/20">
-                  <h2 className="text-xl font-black tracking-tight text-slate-800 dark:text-slate-100 flex items-center gap-2 uppercase">
-                    <History className="w-5 h-5 text-slate-400" /> Summary
-                  </h2>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left min-w-[700px]">
-                    <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest bg-slate-50/50 dark:bg-slate-800/50">
-                      <tr>
-                        <th className="px-8 py-4">Asset</th>
-                        <th className="px-8 py-4 text-right">Deposits</th>
-                        <th className="px-8 py-4 text-right">Withdrawals</th>
-                        <th className="px-8 py-4 text-right">Balance</th>
-                        <th className="px-8 py-4 text-right">Return</th>
-                        <th className="px-8 py-4 text-right">Ann. Return</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                      {stats.filter((s) => !s.isPortfolio).map((stat, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                          <td className="px-8 py-6">
-                            <div className="flex items-center gap-4">
-                              <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: stat.color }} />
-                              <span className="font-black text-sm">{stat.name} ({stat.ticker})</span>
-                            </div>
-                          </td>
-                          <td className="px-8 py-6 text-right font-bold text-emerald-600 text-sm">+{formatCurrency(stat.totalDeposits)}</td>
-                          <td className="px-8 py-6 text-right font-bold text-rose-600 text-sm">{stat.totalWithdrawals > 0 ? '-' : ''}{formatCurrency(stat.totalWithdrawals)}</td>
-                          <td className="px-8 py-6 text-right font-black text-sm">{formatCurrency(stat.finalValue)}</td>
-                          <td className="px-8 py-6 text-right">
-                            <span className={`font-black text-sm ${(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                              {(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits)}
-                              {stat.totalDeposits > 0 ? (
-                                <span className="text-xs font-normal text-slate-400 ml-1">({(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatPercent((stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) / stat.totalDeposits)})</span>
-                              ) : (
-                                <span className="text-xs font-normal text-slate-400 ml-1">(—)</span>
-                              )}
-                            </span>
-                          </td>
-                          <td className="px-8 py-6 text-right font-bold text-sm text-slate-500 dark:text-slate-400">{formatPercent(stat.annualizedReturn)}</td>
-                        </tr>
-                      ))}
-                      {stats.find((s) => s.isPortfolio) && (() => {
-                        const p = stats.find((s) => s.isPortfolio);
-                        return (
-                          <tr className="bg-slate-900 text-white border-t border-slate-800">
-                            <td className="px-8 py-10 font-black rounded-bl-[2.5rem]">Portfolio Total</td>
-                            <td className="px-8 py-10 text-right font-bold text-emerald-400">+{formatCurrency(p.totalDeposits)}</td>
-                            <td className="px-8 py-10 text-right font-bold text-rose-400">{p.totalWithdrawals > 0 ? '-' : ''}{formatCurrency(p.totalWithdrawals)}</td>
-                            <td className="px-8 py-10 text-right font-black text-blue-400 text-lg">{formatCurrency(p.finalValue)}</td>
-                            <td className="px-8 py-10 text-right font-black text-lg">
-                              {(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(p.finalValue + p.totalWithdrawals - p.totalDeposits)}
-                              <span className="text-xs font-normal text-slate-400 ml-1">({(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatPercent((p.finalValue + p.totalWithdrawals - p.totalDeposits) / p.totalDeposits)})</span>
-                            </td>
-                            <td className="px-8 py-10 text-right font-bold rounded-br-[2.5rem]">{formatPercent(p.annualizedReturn)}</td>
-                          </tr>
-                        );
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
           </main>
         </div>
+
+        {/* Summary Table — full width */}
+        {stats.length > 0 && (
+          <div className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/20 dark:bg-slate-800/20">
+              <h2 className="text-xl font-black tracking-tight text-slate-800 dark:text-slate-100 flex items-center gap-2 uppercase">
+                <History className="w-5 h-5 text-slate-400" /> Summary
+              </h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left min-w-[700px]">
+                <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest bg-slate-50/50 dark:bg-slate-800/50">
+                  <tr>
+                    <th className="px-8 py-4">Asset</th>
+                    <th className="px-8 py-4 text-right">Deposits</th>
+                    <th className="px-8 py-4 text-right">Withdrawals</th>
+                    <th className="px-8 py-4 text-right">Balance</th>
+                    <th className="px-8 py-4 text-right">Return</th>
+                    <th className="px-8 py-4 text-right">Ann. Return</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {stats.filter((s) => !s.isPortfolio).map((stat, idx) => (
+                    <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                      <td className="px-8 py-6">
+                        <div className="flex items-center gap-4">
+                          <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: stat.color }} />
+                          <span className="font-black text-sm">{stat.name} ({stat.ticker})</span>
+                        </div>
+                      </td>
+                      <td className="px-8 py-6 text-right font-bold text-sm">{formatCurrency(stat.totalDeposits)}</td>
+                      <td className="px-8 py-6 text-right font-bold text-sm">{formatCurrency(stat.totalWithdrawals)}</td>
+                      <td className="px-8 py-6 text-right font-black text-sm text-blue-600 dark:text-blue-400">{formatCurrency(stat.finalValue)}</td>
+                      <td className="px-8 py-6 text-right">
+                        <span className={`font-black text-sm ${(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits)}
+                          {stat.totalDeposits > 0 ? (
+                            <span className="text-xs font-normal text-slate-400 ml-1">({(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatPercent((stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) / stat.totalDeposits)})</span>
+                          ) : (
+                            <span className="text-xs font-normal text-slate-400 ml-1">(—)</span>
+                          )}
+                        </span>
+                      </td>
+                      <td className="px-8 py-6 text-right font-bold text-sm text-slate-500 dark:text-slate-400">{formatPercent(stat.annualizedReturn)}</td>
+                    </tr>
+                  ))}
+                  {stats.find((s) => s.isPortfolio) && (() => {
+                    const p = stats.find((s) => s.isPortfolio);
+                    return (
+                      <tr className="bg-slate-900 text-white border-t border-slate-800">
+                        <td className="px-8 py-10 font-black rounded-bl-[2.5rem]">Portfolio Total</td>
+                        <td className="px-8 py-10 text-right font-bold">{formatCurrency(p.totalDeposits)}</td>
+                        <td className="px-8 py-10 text-right font-bold">{formatCurrency(p.totalWithdrawals)}</td>
+                        <td className="px-8 py-10 text-right font-black text-blue-400 text-lg">{formatCurrency(p.finalValue)}</td>
+                        <td className={`px-8 py-10 text-right font-black text-lg ${(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(p.finalValue + p.totalWithdrawals - p.totalDeposits)}
+                          <span className="text-xs font-normal text-slate-400 ml-1">({(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatPercent((p.finalValue + p.totalWithdrawals - p.totalDeposits) / p.totalDeposits)})</span>
+                        </td>
+                        <td className="px-8 py-10 text-right font-bold rounded-br-[2.5rem]">{formatPercent(p.annualizedReturn)}</td>
+                      </tr>
+                    );
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Buy Modal ────────────────────────────────────────────────────── */}

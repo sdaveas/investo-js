@@ -53,32 +53,39 @@ export function simulate(priceData, transactions) {
     tickerUnitChanges[ticker] = changes;
   });
 
+  // Track whether any ticker has ever had a transaction by this date
+  let everActive = false;
+
   return dates
     .map((date) => {
       const point = { date };
       let total = 0;
-      let anyActive = false;
+      let anyHasHistory = false;
 
       tickers.forEach((ticker) => {
         const changes = tickerUnitChanges[ticker];
         if (!changes?.length) return;
+        // Check if any transaction has occurred for this ticker by this date
+        const hasStarted = changes[0].date <= date;
+        if (!hasStarted) return;
+        anyHasHistory = true;
+
         let units = 0;
         for (const ch of changes) {
           if (ch.date <= date) units = ch.totalUnits;
           else break;
         }
-        if (units <= 0) return;
 
         const price = priceMap[ticker].get(date);
         if (price != null) {
-          const value = price * units;
+          const value = units > 0 ? price * units : 0;
           point[ticker] = Math.round(value * 100) / 100;
           total += value;
-          anyActive = true;
         }
       });
 
-      if (anyActive) {
+      if (anyHasHistory) {
+        everActive = true;
         point['Total Portfolio'] = Math.round(total * 100) / 100;
       }
       return point;
@@ -151,7 +158,7 @@ export function computeStats(chartData, tickers, transactions, assetNames, asset
   // Portfolio-level stats
   const firstPortfolio = chartData.find((p) => p['Total Portfolio'] != null);
   const pfv = last['Total Portfolio'];
-  if (firstPortfolio && pfv) {
+  if (firstPortfolio && pfv != null) {
     const piv = firstPortfolio['Total Portfolio'];
     const days =
       (new Date(last.date) - new Date(firstPortfolio.date)) / (1000 * 60 * 60 * 24);
