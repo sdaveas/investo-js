@@ -236,8 +236,9 @@ const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [hiddenSeries, setHiddenSeries] = useState(new Set());
   const [showMarkers, setShowMarkers] = useState(true);
-  const [chartPage, setChartPage] = useState(0); // 0 = performance, 1 = line, 2 = pie, 3 = deposits vs value, 4 = returns by asset
-  const CHART_PAGES = 5;
+  const [chartPage, setChartPage] = useState(0); // 0 = performance, 1 = line, 2 = pie, 3 = deposits vs value, 4 = returns by asset, 5 = asset price
+  const CHART_PAGES = 6;
+  const [priceAssetIdx, setPriceAssetIdx] = useState(0);
   const [pieMode, setPieMode] = useState(0); // 0 = allocation, 1 = return
   const [perfMode, setPerfMode] = useState(0); // 0 = %, 1 = $
   const [dark, setDark] = useState(() => {
@@ -1287,12 +1288,14 @@ const App = () => {
               <div className="flex justify-between items-start mb-8 relative z-10">
                 <div>
                   <h2 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">
-                    {['Performance', 'Transaction History', 'Allocation', 'Deposits vs Value', 'Returns by Asset'][chartPage]}
+                    {['Performance', 'Transaction History', 'Allocation', 'Deposits vs Value', 'Returns by Asset', 'Asset Price'][chartPage]}
                   </h2>
                   <p className="text-sm text-slate-400 italic font-medium">
                     {chartPage === 2
                       ? (pieMode === 0 ? 'Current portfolio breakdown' : 'Return contribution per asset')
-                      : ['Return over time', 'Historical data from Yahoo Finance', '', 'Invested capital vs portfolio value', 'Profit & loss per asset'][chartPage]}
+                      : chartPage === 5
+                        ? (chartTickers.length > 0 ? `${selectedAssets[chartTickers[priceAssetIdx % chartTickers.length]]?.name || chartTickers[priceAssetIdx % chartTickers.length]} — historical closing price` : 'No assets')
+                        : ['Return over time', 'Historical data from Yahoo Finance', '', 'Invested capital vs portfolio value', 'Profit & loss per asset'][chartPage]}
                   </p>
                 </div>
                 <div className="flex items-center gap-2" data-share-hide>
@@ -1316,7 +1319,7 @@ const App = () => {
                   {chartPage === 1 && chartData.length > 0 && transactions.length > 0 && (
                     <button
                       onClick={() => setShowMarkers((v) => !v)}
-                      className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
+                      className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all whitespace-nowrap ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
                     >
                       {showMarkers ? '● Markers On' : '○ Markers Off'}
                     </button>
@@ -1337,6 +1340,14 @@ const App = () => {
                         </button>
                       ))}
                     </div>
+                  )}
+                  {chartPage === 5 && chartData.length > 0 && transactions.length > 0 && (
+                    <button
+                      onClick={() => setShowMarkers((v) => !v)}
+                      className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all whitespace-nowrap ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
+                    >
+                      {showMarkers ? '● Markers On' : '○ Markers Off'}
+                    </button>
                   )}
                   {chartData.length > 0 && stats.length > 0 && (
                     <button
@@ -1368,6 +1379,25 @@ const App = () => {
                   )}
                 </div>
               </div>
+              {chartPage === 5 && chartTickers.length > 1 && (
+                <div className="absolute right-6 md:right-8 top-[4.25rem] flex items-center gap-1 z-10" data-share-hide>
+                  <button
+                    onClick={() => setPriceAssetIdx((i) => (i - 1 + chartTickers.length) % chartTickers.length)}
+                    className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className="text-[10px] font-bold text-slate-400 w-8 text-center truncate">
+                    {chartTickers[priceAssetIdx % chartTickers.length]}
+                  </span>
+                  <button
+                    onClick={() => setPriceAssetIdx((i) => (i + 1) % chartTickers.length)}
+                    className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
               <div className="flex-1 min-h-0 relative z-10">
                 {isSimulating ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
@@ -1632,7 +1662,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   );
                 })()
 
-                : (() => {
+                : chartPage === 4 ? (() => {
                   // Returns by Asset — bar chart (page 4)
                   const lastPoint = chartData[chartData.length - 1];
                   const barData = chartTickers
@@ -1669,6 +1699,64 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                           ))}
                         </Bar>
                       </RBarChart>
+                    </ResponsiveContainer>
+                  );
+                })()
+
+                : (() => {
+                  // Asset Price — line chart (page 5)
+                  const ticker = chartTickers[priceAssetIdx % chartTickers.length];
+                  if (!ticker || !priceCache?.[ticker]) return (
+                    <div className="h-full flex items-center justify-center text-slate-400">
+                      <p className="font-bold text-sm">No price data available</p>
+                    </div>
+                  );
+                  const asset = selectedAssets[ticker];
+                  const allPriceData = priceCache[ticker];
+                  // Scope the time window to this asset's transactions (earliest tx − 30 days)
+                  const tickerTxs = transactions.filter((tx) => tx.ticker === ticker);
+                  const earliestTx = tickerTxs.reduce((min, tx) => tx.date < min ? tx.date : min, tickerTxs[0]?.date || '');
+                  const windowStart = new Date(earliestTx);
+                  windowStart.setDate(windowStart.getDate() - 30);
+                  const windowStartStr = windowStart.toISOString().split('T')[0];
+                  const priceData = allPriceData.filter((p) => p.date >= windowStartStr);
+                  const dateIdx = new Map(priceData.map((p, i) => [p.date, i]));
+                  const tickerTxMarkers = tickerTxs
+                    .map((tx) => {
+                      let idx = dateIdx.get(tx.date);
+                      if (idx == null) idx = priceData.findIndex((p) => p.date >= tx.date);
+                      if (idx == null || idx < 0) return null;
+                      return { ...tx, chartDate: priceData[idx].date, price: priceData[idx].price };
+                    })
+                    .filter(Boolean);
+                  return (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={priceData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} minTickGap={60}
+                          tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })} />
+                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
+                          tickFormatter={(v) => `$${v.toLocaleString()}`}
+                          domain={['auto', 'auto']} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
+                          itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                          formatter={(v) => [`$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Price']}
+                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })} />
+                        <Area type="monotone" dataKey="price" stroke={asset?.color || '#3b82f6'} strokeWidth={2} fill={asset?.color || '#3b82f6'} fillOpacity={0.1} dot={false} />
+                        {showMarkers && tickerTxMarkers.map((m) => (
+                          <ReferenceDot
+                            key={`price-${m.id}`}
+                            x={m.chartDate}
+                            y={m.price}
+                            r={5}
+                            fill={m.type === 'buy' ? '#10b981' : '#ef4444'}
+                            stroke="#fff"
+                            strokeWidth={2}
+                            isFront
+                          />
+                        ))}
+                      </AreaChart>
                     </ResponsiveContainer>
                   );
                 })()}
