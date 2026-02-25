@@ -9,6 +9,10 @@
       "destination": "https://query1.finance.yahoo.com/:path*"
     },
     {
+      "source": "/api/quote/:path*",
+      "destination": "https://query1.finance.yahoo.com/:path*"
+    },
+    {
       "source": "/s/:filename",
       "destination": "https://ixgezwdscbkiiqzsrcyu.supabase.co/storage/v1/object/public/screenshots/:filename"
     }
