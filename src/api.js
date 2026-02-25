@@ -52,3 +52,46 @@ export async function fetchPrices(assetDateRanges) {
 
   return results;
 }
+
+export async function fetchIntradayPrices(ticker, date) {
+  // Fetch hourly prices for a specific trading day
+  const dayStart = Math.floor(new Date(date + 'T00:00:00').getTime() / 1000);
+  const dayEnd = dayStart + 86400; // +1 day
+  const url = `/api/chart/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${dayStart}&period2=${dayEnd}&interval=1h&includePrePost=true`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const result = data.chart?.result?.[0];
+    if (!result?.timestamp) return null;
+    const timestamps = result.timestamp;
+    const quotes = result.indicators?.quote?.[0];
+    if (!quotes) return null;
+    return timestamps
+      .map((ts, i) => ({
+        time: new Date(ts * 1000),
+        hour: new Date(ts * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
+        price: quotes.close?.[i],
+        open: quotes.open?.[i],
+        high: quotes.high?.[i],
+        low: quotes.low?.[i],
+      }))
+      .filter((d) => d.price != null);
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchQuote(ticker) {
+  const url = `/api/quote/v8/finance/chart/${encodeURIComponent(ticker)}?range=1d&interval=1m`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const result = data.chart?.result?.[0];
+  if (!result?.meta?.regularMarketPrice) return null;
+  return {
+    price: result.meta.regularMarketPrice,
+    date: new Date().toISOString().split('T')[0],
+    marketState: result.meta.currentTradingPeriod?.regular ? 'regular' : null,
+  };
+}

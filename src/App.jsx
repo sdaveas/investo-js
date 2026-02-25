@@ -16,7 +16,7 @@ import {
   ChevronLeft, ChevronRight, Share2, Camera, Check, Link, ExternalLink,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
-import { searchTickers, fetchPrices } from './api';
+import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices } from './api';
 import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
 
@@ -206,6 +206,146 @@ const composeShareImage = (rawBlob, isDark) =>
     img.src = URL.createObjectURL(rawBlob);
   });
 
+// ─── Intraday Price Picker ──────────────────────────────────────────────────
+
+const IntradayPricePicker = ({ ticker, date, price, onPriceChange, accentColor = 'emerald' }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [intradayData, setIntradayData] = useState(null); // null = not fetched, [] = no data
+  const [loading, setLoading] = useState(false);
+  const [hoveredIdx, setHoveredIdx] = useState(null);
+  const chartRef = useRef(null);
+
+  const ringClass = `focus:ring-${accentColor}-500`;
+
+  // Fetch intraday data when expanded and ticker+date are available
+  useEffect(() => {
+    if (!expanded || !ticker || !date) return;
+    setLoading(true);
+    fetchIntradayPrices(ticker, date).then((data) => {
+      setIntradayData(data || []);
+      setLoading(false);
+    }).catch(() => {
+      setIntradayData([]);
+      setLoading(false);
+    });
+  }, [expanded, ticker, date]);
+
+  if (price == null && !expanded) {
+    return (
+      <div>
+        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Price per Unit</label>
+        <button onClick={() => { setExpanded(true); setIntradayData(null); }} className="w-full bg-slate-100 dark:bg-slate-700 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-400 text-left hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+          Closing Price (default) — tap to override
+        </button>
+      </div>
+    );
+  }
+
+  if (price != null && !expanded) {
+    return (
+      <div>
+        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Price per Unit</label>
+        <div className="flex items-center gap-2">
+          <button onClick={() => { setExpanded(true); setIntradayData(null); }} className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 text-left hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
+            <DollarSign className="w-3 h-3 inline -mt-0.5 mr-0.5 text-slate-400" />{Number(price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </button>
+          <button onClick={() => { onPriceChange(null); setExpanded(false); }} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors" title="Use closing price">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Expanded state — show chart or input
+  const hasData = intradayData && intradayData.length > 0;
+  const minPrice = hasData ? Math.min(...intradayData.map((d) => d.price)) : 0;
+  const maxPrice = hasData ? Math.max(...intradayData.map((d) => d.price)) : 0;
+  const priceRange = maxPrice - minPrice || 1;
+
+  const handleChartClick = (e) => {
+    if (!hasData || !chartRef.current) return;
+    const rect = chartRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const idx = Math.min(intradayData.length - 1, Math.max(0, Math.round((x / rect.width) * (intradayData.length - 1))));
+    onPriceChange(Math.round(intradayData[idx].price * 100) / 100);
+    setExpanded(false);
+  };
+
+  const handleChartHover = (e) => {
+    if (!hasData || !chartRef.current) return;
+    const rect = chartRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const idx = Math.min(intradayData.length - 1, Math.max(0, Math.round((x / rect.width) * (intradayData.length - 1))));
+    setHoveredIdx(idx);
+  };
+
+  return (
+    <div>
+      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Price per Unit</label>
+      <div className="bg-slate-100 dark:bg-slate-700 rounded-xl p-3 space-y-2">
+        {loading ? (
+          <div className="flex items-center justify-center py-4 gap-2 text-slate-400">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-xs font-bold">Loading intraday prices…</span>
+          </div>
+        ) : hasData ? (
+          <>
+            <div className="flex items-center justify-between text-[10px] font-bold text-slate-400">
+              <span>{intradayData[0].hour}</span>
+              {hoveredIdx != null && (
+                <span className="text-slate-600 dark:text-slate-200 font-black">
+                  {intradayData[hoveredIdx].hour} — ${intradayData[hoveredIdx].price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              )}
+              <span>{intradayData[intradayData.length - 1].hour}</span>
+            </div>
+            <div
+              ref={chartRef}
+              className="relative h-16 cursor-crosshair"
+              onClick={handleChartClick}
+              onMouseMove={handleChartHover}
+              onMouseLeave={() => setHoveredIdx(null)}
+            >
+              <svg viewBox={`0 0 ${intradayData.length - 1} 100`} className="w-full h-full" preserveAspectRatio="none">
+                <polyline
+                  fill="none"
+                  stroke="#3b82f6"
+                  strokeWidth="2"
+                  vectorEffect="non-scaling-stroke"
+                  points={intradayData.map((d, i) => `${i},${100 - ((d.price - minPrice) / priceRange) * 90 - 5}`).join(' ')}
+                />
+              </svg>
+              {hoveredIdx != null && (
+                <div
+                  className="absolute top-0 bottom-0 w-px bg-blue-400 pointer-events-none"
+                  style={{ left: `${(hoveredIdx / (intradayData.length - 1)) * 100}%` }}
+                />
+              )}
+            </div>
+            <p className="text-[10px] font-bold text-slate-400 text-center">Click on the chart to pick a price</p>
+          </>
+        ) : (
+          <>
+            <p className="text-[10px] font-bold text-slate-400 text-center py-1">No intraday data available for this date</p>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
+              <input type="number" value={price ?? ''} onChange={(e) => onPriceChange(e.target.value === '' ? null : Math.max(0, Number(e.target.value)))}
+                placeholder="Enter price manually" autoFocus
+                className={`w-full bg-white dark:bg-slate-800 border-none rounded-xl py-2.5 pl-8 pr-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 ${ringClass} outline-none`} />
+            </div>
+          </>
+        )}
+        <div className="flex gap-2">
+          <button onClick={() => { onPriceChange(null); setExpanded(false); }} className="flex-1 py-1.5 rounded-lg text-[10px] font-bold text-slate-400 bg-slate-200 dark:bg-slate-600 hover:bg-slate-300 dark:hover:bg-slate-500 transition-colors">
+            Use Closing Price
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const LS_KEY = 'investo-portfolio';
 let savedPortfolio = null;
 try {
@@ -239,6 +379,7 @@ const App = () => {
   const [chartPage, setChartPage] = useState(0); // 0 = performance, 1 = line, 2 = pie, 3 = deposits vs value, 4 = returns by asset, 5 = asset price
   const CHART_PAGES = 6;
   const [priceAssetIdx, setPriceAssetIdx] = useState(0);
+  const [liveQuotes, setLiveQuotes] = useState({});  // { ticker: { price, date } }
   const [pieMode, setPieMode] = useState(0); // 0 = allocation, 1 = return
   const [perfMode, setPerfMode] = useState(0); // 0 = %, 1 = $
   const [dark, setDark] = useState(() => {
@@ -251,6 +392,7 @@ const App = () => {
   const [sellTicker, setSellTicker] = useState(null);         // ticker — sell step 2
   const [modalAmount, setModalAmount] = useState(DEFAULT_AMOUNT);
   const [modalDate, setModalDate] = useState(fiveYearsAgo.toISOString().split('T')[0]);
+  const [modalPrice, setModalPrice] = useState(null);          // null = closing price, number = custom
   const [editingTx, setEditingTx] = useState(null);           // tx being edited
   const [importText, setImportText] = useState('');
   const [quickAddText, setQuickAddText] = useState('');
@@ -347,6 +489,7 @@ const App = () => {
   const openBuyModal = useCallback(() => {
     setModalAmount(DEFAULT_AMOUNT);
     setModalDate(TODAY);
+    setModalPrice(null);
     setStagedAsset(null);
     setModalMode('buy');
   }, [transactions]);
@@ -354,6 +497,7 @@ const App = () => {
   const openSellModal = useCallback((preselectedTicker = null) => {
     setModalAmount(DEFAULT_AMOUNT);
     setModalDate(TODAY);
+    setModalPrice(null);
     setSellTicker(preselectedTicker);
     setModalMode('sell');
   }, []);
@@ -363,6 +507,7 @@ const App = () => {
     if (!asset) return;
     setModalAmount(DEFAULT_AMOUNT);
     setModalDate(TODAY);
+    setModalPrice(null);
     setStagedAsset({ symbol: ticker, name: asset.name });
     setModalMode('buy');
   }, [selectedAssets, transactions]);
@@ -378,18 +523,36 @@ const App = () => {
 
   const openEditModal = useCallback((tx) => {
     setEditingTx(tx);
-    setModalAmount(tx.amount);
-    setModalDate(tx.date);
+    // Ensure amount is always a number
+    const amount = typeof tx.amount === 'number' ? tx.amount : Number(tx.amount) || 0;
+    setModalAmount(amount);
+    // Ensure date is always a string
+    const date = typeof tx.date === 'string' ? tx.date : String(tx.date || TODAY);
+    setModalDate(date);
+    setModalPrice(tx.price || null);
     setModalMode('edit');
   }, []);
 
-  const saveEdit = useCallback(() => {
+  const saveEdit = useCallback((overrideAmount = null, overrideDate = null, overridePrice = null) => {
     if (!editingTx) return;
+    const rawAmount = overrideAmount !== null ? overrideAmount : modalAmount;
+    // Ensure amount is a valid number
+    const amountToSave = (typeof rawAmount === 'number' && !isNaN(rawAmount) && isFinite(rawAmount) && rawAmount > 0) 
+      ? rawAmount 
+      : (editingTx.amount || DEFAULT_AMOUNT);
+    const dateToSave = overrideDate !== null ? overrideDate : modalDate;
+    const priceToSave = overridePrice !== null ? overridePrice : modalPrice;
     setTransactions((prev) =>
-      prev.map((tx) => tx.id === editingTx.id ? { ...tx, amount: modalAmount, date: modalDate } : tx),
+      prev.map((tx) => {
+        if (tx.id !== editingTx.id) return tx;
+        const updated = { ...tx, amount: amountToSave, date: dateToSave };
+        if (priceToSave) updated.price = priceToSave;
+        else delete updated.price;
+        return updated;
+      }),
     );
     closeModal();
-  }, [editingTx, modalAmount, modalDate, closeModal]);
+  }, [editingTx, modalAmount, modalDate, modalPrice, closeModal]);
 
   // ─── Transaction actions ───────────────────────────────────────────────────
 
@@ -400,18 +563,24 @@ const App = () => {
       colorIdx.current++;
       setSelectedAssets((prev) => ({ ...prev, [ticker]: { name, color } }));
     }
-    setTransactions((prev) => [
-      ...prev,
-      { id: nextTxId++, ticker, type: 'buy', amount: modalAmount, date: modalDate },
-    ]);
-  }, [modalAmount, modalDate, selectedAssets]);
+    // Ensure amount is a valid number
+    const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
+      ? modalAmount 
+      : DEFAULT_AMOUNT;
+    const tx = { id: nextTxId++, ticker, type: 'buy', amount: validAmount, date: modalDate };
+    if (modalPrice) tx.price = modalPrice;
+    setTransactions((prev) => [...prev, tx]);
+  }, [modalAmount, modalDate, modalPrice, selectedAssets]);
 
   const addSell = useCallback((ticker) => {
-    setTransactions((prev) => [
-      ...prev,
-      { id: nextTxId++, ticker, type: 'sell', amount: modalAmount, date: modalDate },
-    ]);
-  }, [modalAmount, modalDate]);
+    // Ensure amount is a valid number
+    const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
+      ? modalAmount 
+      : DEFAULT_AMOUNT;
+    const tx = { id: nextTxId++, ticker, type: 'sell', amount: validAmount, date: modalDate };
+    if (modalPrice) tx.price = modalPrice;
+    setTransactions((prev) => [...prev, tx]);
+  }, [modalAmount, modalDate, modalPrice]);
 
   // ─── Quick Add (AI) ──────────────────────────────────────────────────────
 
@@ -626,6 +795,7 @@ const App = () => {
     const nameIdx = header.findIndex((h) => h === 'name');
     const actionIdx = header.findIndex((h) => ['action', 'type'].includes(h));
     const amountIdx = header.findIndex((h) => h === 'amount');
+    const priceIdx = header.findIndex((h) => h === 'price');
     const hasHeader = dateIdx >= 0 && tickerIdx >= 0;
     const rows = [];
     for (let i = hasHeader ? 1 : 0; i < lines.length; i++) {
@@ -635,8 +805,11 @@ const App = () => {
       const name = hasHeader && nameIdx >= 0 ? cols[nameIdx] : '';
       const action = (cols[hasHeader ? actionIdx : 2] || '').toLowerCase();
       const amount = parseFloat(cols[hasHeader ? amountIdx : 3]);
+      const price = hasHeader && priceIdx >= 0 ? parseFloat(cols[priceIdx]) : NaN;
       if (date && ticker && (action === 'buy' || action === 'sell') && amount > 0) {
-        rows.push({ date, ticker, name: name || ticker, type: action, amount });
+        const row = { date, ticker, name: name || ticker, type: action, amount };
+        if (!isNaN(price) && price > 0) row.price = price;
+        rows.push(row);
       }
     }
     return rows;
@@ -653,7 +826,9 @@ const App = () => {
         newAssets[row.ticker] = { name: row.name, color: COLORS[colorIdx.current % COLORS.length] };
         colorIdx.current++;
       }
-      newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date });
+      const importedTx = { id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date };
+      if (row.price) importedTx.price = row.price;
+      newTxs.push(importedTx);
     });
     setSelectedAssets(newAssets);
     setTransactions((prev) => [...prev, ...newTxs]);
@@ -662,10 +837,10 @@ const App = () => {
   }, [importParsed, selectedAssets]);
 
   const exportCSV = useCallback(() => {
-    const headers = 'Date,Asset,Name,Action,Amount';
+    const headers = 'Date,Asset,Name,Action,Amount,Price';
     const rows = transactions.map((tx) => {
       const name = (selectedAssets[tx.ticker]?.name || tx.ticker).replace(/,/g, ' ');
-      return `${tx.date},${tx.ticker},${name},${tx.type},${tx.amount}`;
+      return `${tx.date},${tx.ticker},${name},${tx.type},${tx.amount},${tx.price || ''}`;
     });
     const csv = [headers, ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -768,9 +943,62 @@ const App = () => {
   // Save to localStorage on every change
   useEffect(() => {
     if (isHydratingRef.current) return;
-    localStorage.setItem(LS_KEY, JSON.stringify({
-      transactions, selectedAssets, colorIdx: colorIdx.current,
-    }));
+    try {
+      // Create clean copies to avoid any circular references
+      const cleanTransactions = transactions.map((tx) => {
+        // Only include primitive values, ensure types are correct
+        const clean = {
+          id: typeof tx.id === 'number' ? tx.id : Number(tx.id),
+          ticker: String(tx.ticker || ''),
+          type: String(tx.type || 'buy'),
+          amount: typeof tx.amount === 'number' ? tx.amount : Number(tx.amount) || 0,
+          date: String(tx.date || TODAY)
+        };
+        if (tx.price != null && typeof tx.price === 'number') {
+          clean.price = tx.price;
+        }
+        return clean;
+      });
+      
+      // Safely extract selectedAssets properties
+      const cleanSelectedAssets = {};
+      for (const [key, value] of Object.entries(selectedAssets)) {
+        if (value && typeof value === 'object') {
+          cleanSelectedAssets[String(key)] = {
+            name: String(value.name || ''),
+            color: String(value.color || COLORS[0])
+          };
+        }
+      }
+      
+      const dataToSave = {
+        transactions: cleanTransactions,
+        selectedAssets: cleanSelectedAssets,
+        colorIdx: typeof colorIdx.current === 'number' ? colorIdx.current : 0
+      };
+      
+      localStorage.setItem(LS_KEY, JSON.stringify(dataToSave));
+    } catch (error) {
+      console.error('Failed to save to localStorage:', error);
+      // Try to save with minimal data as fallback
+      try {
+        const minimalData = {
+          transactions: transactions.map(({ id, ticker, type, amount, date, price }) => ({
+            id: Number(id),
+            ticker: String(ticker),
+            type: String(type),
+            amount: Number(amount),
+            date: String(date),
+            ...(price != null && { price: Number(price) })
+          })),
+          selectedAssets: {},
+          colorIdx: 0
+        };
+        localStorage.setItem(LS_KEY, JSON.stringify(minimalData));
+      } catch (fallbackError) {
+        console.error('Fallback save also failed:', fallbackError);
+      }
+    }
   }, [transactions, selectedAssets]);
 
   // Auth state listener
@@ -899,19 +1127,42 @@ const App = () => {
     return () => { cancelled = true; clearTimeout(debounce); };
   }, [transactions]);
 
+  // ─── Merge live quotes into price cache ─────────────────────────────────────
+
+  const livePriceCache = useMemo(() => {
+    if (!priceCache) return null;
+    const merged = {};
+    for (const [ticker, prices] of Object.entries(priceCache)) {
+      const liveQ = liveQuotes[ticker];
+      if (!liveQ || !prices?.length) {
+        merged[ticker] = prices;
+        continue;
+      }
+      const last = prices[prices.length - 1];
+      if (last.date < liveQ.date) {
+        merged[ticker] = [...prices, { date: liveQ.date, price: liveQ.price }];
+      } else if (last.date === liveQ.date) {
+        merged[ticker] = [...prices.slice(0, -1), { date: liveQ.date, price: liveQ.price }];
+      } else {
+        merged[ticker] = prices;
+      }
+    }
+    return merged;
+  }, [priceCache, liveQuotes]);
+
   // ─── Recompute chart ──────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!priceCache || transactions.length === 0) {
+    if (!livePriceCache || transactions.length === 0) {
       setChartData([]);
       setStats([]);
       return;
     }
 
-    const activeTx = transactions.filter((tx) => priceCache[tx.ticker]?.length > 0);
+    const activeTx = transactions.filter((tx) => livePriceCache[tx.ticker]?.length > 0);
     if (activeTx.length === 0) { setChartData([]); setStats([]); return; }
 
-    const data = simulate(priceCache, activeTx);
+    const data = simulate(livePriceCache, activeTx);
     setChartData(data);
 
     const tickers = [...new Set(activeTx.map((tx) => tx.ticker))];
@@ -922,9 +1173,31 @@ const App = () => {
       Object.entries(selectedAssets).map(([t, a]) => [t, a.color]),
     );
     setStats(computeStats(data, tickers, activeTx, names, colors));
-  }, [priceCache, transactions, selectedAssets]);
+  }, [livePriceCache, transactions, selectedAssets]);
 
-  const chartTickers = selectedTickers.filter((t) => priceCache?.[t]);
+  const chartTickers = selectedTickers.filter((t) => livePriceCache?.[t]);
+
+  // ─── Live quotes for all tickers ───────────────────────────────────────────
+
+  useEffect(() => {
+    if (!priceCache) return;
+    const tickers = Object.keys(priceCache).filter((t) => priceCache[t]?.length > 0);
+    if (tickers.length === 0) return;
+    // Only fetch tickers we don't already have a quote for today
+    const needed = tickers.filter((t) => liveQuotes[t]?.date !== TODAY);
+    if (needed.length === 0) return;
+    let cancelled = false;
+    Promise.all(needed.map((t) => fetchQuote(t).then((q) => [t, q]).catch(() => [t, null])))
+      .then((results) => {
+        if (cancelled) return;
+        const updates = {};
+        results.forEach(([t, q]) => { if (q) updates[t] = q; });
+        if (Object.keys(updates).length > 0) {
+          setLiveQuotes((prev) => ({ ...prev, ...updates }));
+        }
+      });
+    return () => { cancelled = true; };
+  }, [priceCache]);
 
   // Build two marker sets: per-asset line + Total Portfolio line
   const { assetMarkers, portfolioMarkers } = useMemo(() => {
@@ -1188,7 +1461,7 @@ const App = () => {
                       {txs.map((tx) => (
                         <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'buy' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
                           <span className="uppercase text-[10px] font-black w-8">{tx.type}</span>
-                          <span className="flex-1 text-white/80">{formatCurrency(tx.amount)}</span>
+                          <span className="flex-1 text-white/80">{formatCurrency(tx.amount)}{tx.price ? <span className="text-white/30 ml-1">@${tx.price}</span> : ''}</span>
                           <span className="text-white/40 text-[10px]">{formatShortDate(tx.date)}</span>
                           <button onClick={(e) => { e.stopPropagation(); removeTx(tx.id); }} className="text-white/20 hover:text-rose-400 p-0.5 transition-colors">
                             <Trash2 className="w-3 h-3" />
@@ -1294,7 +1567,7 @@ const App = () => {
                     {chartPage === 2
                       ? (pieMode === 0 ? 'Current portfolio breakdown' : 'Return contribution per asset')
                       : chartPage === 5
-                        ? (chartTickers.length > 0 ? `${selectedAssets[chartTickers[priceAssetIdx % chartTickers.length]]?.name || chartTickers[priceAssetIdx % chartTickers.length]} — historical closing price` : 'No assets')
+                        ? (chartTickers.length > 0 ? `${selectedAssets[chartTickers[priceAssetIdx % chartTickers.length]]?.name || chartTickers[priceAssetIdx % chartTickers.length]} — ${liveQuotes[chartTickers[priceAssetIdx % chartTickers.length]] ? 'live price' : 'historical closing price'}` : 'No assets')
                         : ['Return over time', 'Historical data from Yahoo Finance', '', 'Invested capital vs portfolio value', 'Profit & loss per asset'][chartPage]}
                   </p>
                 </div>
@@ -1706,13 +1979,13 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                 : (() => {
                   // Asset Price — line chart (page 5)
                   const ticker = chartTickers[priceAssetIdx % chartTickers.length];
-                  if (!ticker || !priceCache?.[ticker]) return (
+                  if (!ticker || !livePriceCache?.[ticker]) return (
                     <div className="h-full flex items-center justify-center text-slate-400">
                       <p className="font-bold text-sm">No price data available</p>
                     </div>
                   );
                   const asset = selectedAssets[ticker];
-                  const allPriceData = priceCache[ticker];
+                  const allPriceData = livePriceCache[ticker];
                   // Scope the time window to this asset's transactions (earliest tx − 30 days)
                   const tickerTxs = transactions.filter((tx) => tx.ticker === ticker);
                   const earliestTx = tickerTxs.reduce((min, tx) => tx.date < min ? tx.date : min, tickerTxs[0]?.date || '');
@@ -1922,7 +2195,15 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
-                      <input type="number" value={modalAmount} onChange={(e) => setModalAmount(Math.max(0, Number(e.target.value)))}
+                      <input type="number" value={modalAmount} onChange={(e) => {
+                        const value = e.target.value;
+                        const numValue = Number(value);
+                        if (value !== '' && !isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
+                          setModalAmount(numValue);
+                        } else if (value === '') {
+                          setModalAmount(0);
+                        }
+                      }}
                         className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-emerald-500 outline-none" />
                     </div>
                   </div>
@@ -1931,6 +2212,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                     <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
                       className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" />
                   </div>
+                  <IntradayPricePicker ticker={stagedAsset.symbol} date={modalDate} price={modalPrice} onPriceChange={setModalPrice} accentColor="emerald" />
                 </div>
                 <div className="flex gap-3 pt-2">
                   <button onClick={() => setStagedAsset(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Back</button>
@@ -2035,7 +2317,15 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sale Amount</label>
                     <div className="relative">
                       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
-                      <input type="number" value={modalAmount} onChange={(e) => setModalAmount(Math.max(0, Number(e.target.value)))}
+                      <input type="number" value={modalAmount} onChange={(e) => {
+                        const value = e.target.value;
+                        const numValue = Number(value);
+                        if (value !== '' && !isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
+                          setModalAmount(numValue);
+                        } else if (value === '') {
+                          setModalAmount(0);
+                        }
+                      }}
                         className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-rose-500 outline-none" />
                     </div>
                   </div>
@@ -2048,6 +2338,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                       })()}
                       className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 focus:ring-rose-500 outline-none" />
                   </div>
+                  <IntradayPricePicker ticker={sellTicker} date={modalDate} price={modalPrice} onPriceChange={setModalPrice} accentColor="rose" />
                 </div>
                 <div className="flex gap-3 pt-2">
                   <button onClick={() => setSellTicker(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Back</button>
@@ -2112,7 +2403,34 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
-                  <input type="number" value={modalAmount} onChange={(e) => setModalAmount(Math.max(0, Number(e.target.value)))}
+                  <input type="number" value={typeof modalAmount === 'number' ? modalAmount : (Number(modalAmount) || 0)} onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '' || value === null || value === undefined) {
+                        setModalAmount(0);
+                      } else {
+                        const numValue = Number(value);
+                        const newAmount = isNaN(numValue) ? 0 : Math.max(0, numValue);
+                        setModalAmount(newAmount);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const input = e.currentTarget;
+                        // Read the current value directly from the input field
+                        const rawValue = input.value;
+                        if (rawValue && rawValue.trim() !== '') {
+                          const amount = Math.max(0, Number(rawValue));
+                          if (amount > 0 && !isNaN(amount)) {
+                            // Just update the state, don't save yet
+                            setModalAmount(amount);
+                            // Blur the input to commit the value
+                            input.blur();
+                          }
+                        }
+                      }
+                    }}
                     className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none" />
                 </div>
               </div>
@@ -2121,6 +2439,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                 <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
                   className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
+              <IntradayPricePicker ticker={editingTx.ticker} date={modalDate} price={modalPrice} onPriceChange={setModalPrice} accentColor="blue" />
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Cancel</button>

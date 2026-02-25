@@ -1,7 +1,8 @@
 /**
  * Portfolio simulation using real historical prices.
  * Supports multiple buy/sell transactions per asset.
- * transactions: [{ id, ticker, type: 'buy'|'sell', amount, date }]
+ * transactions: [{ id, ticker, type: 'buy'|'sell', amount, date, price? }]
+ * When tx.price is provided, it is used instead of the day's closing price for unit calculation.
  */
 
 export function simulate(priceData, transactions) {
@@ -41,7 +42,7 @@ export function simulate(priceData, transactions) {
     let units = 0;
     const changes = [];
     txByTicker[ticker].forEach((tx) => {
-      const price = priceMap[ticker].get(tx.date);
+      const price = tx.price || priceMap[ticker].get(tx.date);
       if (!price) return;
       if (tx.type === 'buy') {
         units += tx.amount / price;
