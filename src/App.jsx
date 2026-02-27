@@ -1026,6 +1026,16 @@ const App = () => {
             }));
             setTimeout(() => { isHydratingRef.current = false; }, 200);
           }
+          if (data) {
+            if (data.dark_mode != null) {
+              setDark(data.dark_mode);
+              localStorage.setItem('investo-dark', String(data.dark_mode));
+            } else {
+              // First sign-in after adding column — persist current local preference
+              const currentDark = localStorage.getItem('investo-dark') === 'true';
+              supabase.from('portfolios').update({ dark_mode: currentDark }).eq('user_id', u.id);
+            }
+          }
         } catch { /* first sign-in — no data yet */ }
       } else {
         setUser(null);
@@ -1045,13 +1055,14 @@ const App = () => {
           transactions,
           selected_assets: selectedAssets,
           color_idx: colorIdx.current,
+          dark_mode: dark,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
       } catch { /* silent */ }
       setIsSyncing(false);
     }, 1500);
     return () => { clearTimeout(t); setIsSyncing(false); };
-  }, [transactions, selectedAssets, user]);
+  }, [transactions, selectedAssets, user, dark]);
 
   const signInWithGoogle = useCallback(async () => {
     if (!supabase) return;
@@ -1234,8 +1245,13 @@ const App = () => {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   const toggleDark = useCallback(() => {
-    setDark((v) => { const next = !v; localStorage.setItem('investo-dark', next); return next; });
-  }, []);
+    const next = !dark;
+    setDark(next);
+    localStorage.setItem('investo-dark', next);
+    if (supabase && user) {
+      supabase.from('portfolios').update({ dark_mode: next }).eq('user_id', user.id);
+    }
+  }, [dark, user]);
 
 
   return (
