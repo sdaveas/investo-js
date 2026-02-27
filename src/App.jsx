@@ -1243,7 +1243,7 @@ const App = () => {
       <div className="max-w-7xl mx-auto space-y-8">
 
         {/* Header */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-800 p-6 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700">
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700">
           <div className="flex items-center gap-4">
             <button
               onClick={() => setSidebarOpen((v) => !v)}
@@ -1374,9 +1374,9 @@ const App = () => {
               </div>
             </div>
             {quickAddPreview && (
-              <div className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${quickAddPreview.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-200 text-emerald-700' : 'bg-rose-50 dark:bg-rose-950 border-rose-200 text-rose-700'}`}>
+              <div className={`flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${quickAddPreview.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-200 text-emerald-700' : 'bg-rose-50 dark:bg-rose-950 border-rose-200 text-rose-700'}`}>
                 <span className="uppercase text-[10px] font-black w-8">{quickAddPreview.type}</span>
-                <span className="flex-1 truncate">{quickAddPreview.name} ({quickAddPreview.ticker})</span>
+                <span className="flex-1 truncate min-w-[100px]">{quickAddPreview.name} ({quickAddPreview.ticker})</span>
                 <span>{formatCurrency(quickAddPreview.amount)}</span>
                 <span className="text-slate-400 text-[10px]">{formatShortDate(quickAddPreview.date)}</span>
                 <button onClick={confirmQuickAdd} className="p-1 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors" title="Confirm">
@@ -1412,7 +1412,7 @@ const App = () => {
             </div>
             {/* Transaction ledger */}
             {selectedTickers.length > 0 && (
-            <div className="bg-slate-900 text-white p-6 rounded-[2rem] shadow-2xl space-y-4">
+            <div className="bg-slate-900 text-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] shadow-2xl space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
                 <History className="w-4 h-4" /> Transactions
               </h3>
@@ -1557,10 +1557,10 @@ const App = () => {
           <main className={`${sidebarOpen ? 'lg:col-span-8' : 'lg:col-span-12'} space-y-8`}>
 
             {/* Chart */}
-            <div ref={chartRef} className="bg-white dark:bg-slate-800 p-6 md:p-8 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 h-[550px] flex flex-col overflow-hidden relative">
-              <div className="flex justify-between items-start mb-8 relative z-10">
+            <div ref={chartRef} className="bg-white dark:bg-slate-800 p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 h-[380px] sm:h-[450px] md:h-[550px] flex flex-col overflow-hidden relative">
+              <div className="flex flex-wrap justify-between items-start mb-4 sm:mb-8 gap-y-3 relative z-10">
                 <div>
-                  <h2 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">
+                  <h2 className="text-base sm:text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">
                     {['Performance', 'Transaction History', 'Allocation', 'Deposits vs Value', 'Returns by Asset', 'Asset Price'][chartPage]}
                   </h2>
                   <p className="text-sm text-slate-400 italic font-medium">
@@ -1571,7 +1571,7 @@ const App = () => {
                         : ['Return over time', 'Historical data from Yahoo Finance', '', 'Invested capital vs portfolio value', 'Profit & loss per asset'][chartPage]}
                   </p>
                 </div>
-                <div className="flex items-center gap-2" data-share-hide>
+                <div className="flex flex-wrap items-center gap-2" data-share-hide>
                   {chartPage === 0 && chartData.length > 0 && (
                     <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
                       {['%', '$'].map((label, i) => (
@@ -1653,7 +1653,7 @@ const App = () => {
                 </div>
               </div>
               {chartPage === 5 && chartTickers.length > 1 && (
-                <div className="absolute right-6 md:right-8 top-[4.25rem] flex items-center gap-1 z-10" data-share-hide>
+              <div className="absolute right-4 sm:right-6 md:right-8 top-[3.5rem] sm:top-[4.25rem] flex items-center gap-1 z-10" data-share-hide>
                   <button
                     onClick={() => setPriceAssetIdx((i) => (i - 1 + chartTickers.length) % chartTickers.length)}
                     className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
@@ -2043,14 +2043,14 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
               return (
                 <div ref={statsRef} className="space-y-6">
                   {portfolio && (
-                    <div className="p-6 rounded-[2rem] border bg-slate-900 text-white border-slate-800 shadow-2xl transition-all hover:translate-y-[-4px]">
+                    <div className="p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-slate-900 text-white border-slate-800 shadow-2xl transition-all hover:translate-y-[-4px]">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
                           <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-blue-600 w-fit mb-2">Combined</div>
-                          <p className="text-3xl font-black tracking-tight">{formatCurrency(portfolio.finalValue)}</p>
+                          <p className="text-2xl sm:text-3xl font-black tracking-tight">{formatCurrency(portfolio.finalValue)}</p>
                           <p className="text-xs font-bold text-slate-400 mt-1">Total Portfolio</p>
                         </div>
-                        <div className="flex gap-6">
+                        <div className="flex gap-4 sm:gap-6">
                           <div className="text-center">
                             <p className={`text-xl font-black ${(portfolio.finalValue + portfolio.totalWithdrawals - portfolio.totalDeposits) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                               {(portfolio.finalValue + portfolio.totalWithdrawals - portfolio.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(portfolio.finalValue + portfolio.totalWithdrawals - portfolio.totalDeposits)}
@@ -2068,7 +2068,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   {assets.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                       {assets.map((stat, idx) => (
-                        <div key={idx} className="p-6 rounded-[2rem] border bg-white dark:bg-slate-800 border-slate-200 shadow-sm transition-all hover:translate-y-[-4px]">
+                        <div key={idx} className="p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-white dark:bg-slate-800 border-slate-200 shadow-sm transition-all hover:translate-y-[-4px]">
                           <div className="flex justify-between items-start mb-4">
                             <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
                               {stat.ticker}
@@ -2098,9 +2098,9 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
 
         {/* Summary Table — full width */}
         {stats.length > 0 && (
-          <div ref={tableRef} className="bg-white dark:bg-slate-800 rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-            <div className="p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/20 dark:bg-slate-800/20">
-              <h2 className="text-xl font-black tracking-tight text-slate-800 dark:text-slate-100 flex items-center gap-2 uppercase">
+          <div ref={tableRef} className="bg-white dark:bg-slate-800 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+            <div className="px-4 py-4 sm:p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/20 dark:bg-slate-800/20">
+              <h2 className="text-base sm:text-xl font-black tracking-tight text-slate-800 dark:text-slate-100 flex items-center gap-2 uppercase">
                 <History className="w-5 h-5 text-slate-400" /> Summary
               </h2>
             </div>
@@ -2108,27 +2108,27 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
               <table className="w-full text-left min-w-[700px]">
                 <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest bg-slate-50/50 dark:bg-slate-800/50">
                   <tr>
-                    <th className="px-8 py-4">Asset</th>
-                    <th className="px-8 py-4 text-right">Deposits</th>
-                    <th className="px-8 py-4 text-right">Withdrawals</th>
-                    <th className="px-8 py-4 text-right">Balance</th>
-                    <th className="px-8 py-4 text-right">Return</th>
-                    <th className="px-8 py-4 text-right">Ann. Return</th>
+                    <th className="px-4 sm:px-8 py-3 sm:py-4">Asset</th>
+                    <th className="px-4 sm:px-8 py-3 sm:py-4 text-right">Deposits</th>
+                    <th className="px-4 sm:px-8 py-3 sm:py-4 text-right">Withdrawals</th>
+                    <th className="px-4 sm:px-8 py-3 sm:py-4 text-right">Balance</th>
+                    <th className="px-4 sm:px-8 py-3 sm:py-4 text-right">Return</th>
+                    <th className="px-4 sm:px-8 py-3 sm:py-4 text-right">Ann. Return</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {stats.filter((s) => !s.isPortfolio).map((stat, idx) => (
                     <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                      <td className="px-8 py-6">
-                        <div className="flex items-center gap-4">
+                      <td className="px-4 sm:px-8 py-4 sm:py-6">
+                        <div className="flex items-center gap-3 sm:gap-4">
                           <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: stat.color }} />
                           <span className="font-black text-sm">{stat.name} ({stat.ticker})</span>
                         </div>
                       </td>
-                      <td className="px-8 py-6 text-right font-bold text-sm">{formatCurrency(stat.totalDeposits)}</td>
-                      <td className="px-8 py-6 text-right font-bold text-sm">{formatCurrency(stat.totalWithdrawals)}</td>
-                      <td className="px-8 py-6 text-right font-black text-sm text-blue-600 dark:text-blue-400">{formatCurrency(stat.finalValue)}</td>
-                      <td className="px-8 py-6 text-right">
+                      <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm">{formatCurrency(stat.totalDeposits)}</td>
+                      <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm">{formatCurrency(stat.totalWithdrawals)}</td>
+                      <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-black text-sm text-blue-600 dark:text-blue-400">{formatCurrency(stat.finalValue)}</td>
+                      <td className="px-4 sm:px-8 py-4 sm:py-6 text-right">
                         <span className={`font-black text-sm ${(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits)}
                           {stat.totalDeposits > 0 ? (
@@ -2138,22 +2138,22 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                           )}
                         </span>
                       </td>
-                      <td className="px-8 py-6 text-right font-bold text-sm text-slate-500 dark:text-slate-400">{formatPercent(stat.annualizedReturn)}</td>
+                      <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm text-slate-500 dark:text-slate-400">{formatPercent(stat.annualizedReturn)}</td>
                     </tr>
                   ))}
                   {stats.find((s) => s.isPortfolio) && (() => {
                     const p = stats.find((s) => s.isPortfolio);
                     return (
                       <tr className="bg-slate-900 text-white border-t border-slate-800">
-                        <td className="px-8 py-10 font-black rounded-bl-[2.5rem]">Portfolio Total</td>
-                        <td className="px-8 py-10 text-right font-bold">{formatCurrency(p.totalDeposits)}</td>
-                        <td className="px-8 py-10 text-right font-bold">{formatCurrency(p.totalWithdrawals)}</td>
-                        <td className="px-8 py-10 text-right font-black text-blue-400 text-lg">{formatCurrency(p.finalValue)}</td>
-                        <td className={`px-8 py-10 text-right font-black text-lg ${(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <td className="px-4 sm:px-8 py-6 sm:py-10 font-black rounded-bl-2xl sm:rounded-bl-[2.5rem]">Portfolio Total</td>
+                        <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-bold">{formatCurrency(p.totalDeposits)}</td>
+                        <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-bold">{formatCurrency(p.totalWithdrawals)}</td>
+                        <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-black text-blue-400 text-lg">{formatCurrency(p.finalValue)}</td>
+                        <td className={`px-4 sm:px-8 py-6 sm:py-10 text-right font-black text-lg ${(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                           {(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(p.finalValue + p.totalWithdrawals - p.totalDeposits)}
                           <span className="text-xs font-normal text-slate-400 ml-1">({(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatPercent((p.finalValue + p.totalWithdrawals - p.totalDeposits) / p.totalDeposits)})</span>
                         </td>
-                        <td className="px-8 py-10 text-right font-bold rounded-br-[2.5rem]">{formatPercent(p.annualizedReturn)}</td>
+                        <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-bold rounded-br-2xl sm:rounded-br-[2.5rem]">{formatPercent(p.annualizedReturn)}</td>
                       </tr>
                     );
                   })()}
