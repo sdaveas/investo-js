@@ -1269,106 +1269,101 @@ const App = () => {
     <div className={`min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8${dark ? ' dark' : ''}`}>
       <div className="max-w-7xl mx-auto space-y-8">
 
+        {/* Menu */}
+        <div className="flex justify-end">
+          <div className="relative flex">
+            <button
+              onClick={() => setAboutOpen((v) => !v)}
+              className="px-3 py-2 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 transition-all flex items-center"
+              title="Menu"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+            {aboutOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setAboutOpen(false)} />
+                <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 p-5 z-50 space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-blue-600 p-2.5 rounded-xl shadow-lg shadow-blue-200 dark:shadow-blue-900">
+                      <BarChart3 className="text-white w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">What I Have</h3>
+                      <span className="bg-emerald-50 dark:bg-emerald-950 text-emerald-700 text-[9px] font-black px-1.5 py-1 rounded-full inline-flex items-center gap-1 uppercase tracking-wider leading-none">
+                        <Zap className="w-2.5 h-2.5 fill-current flex-shrink-0" /> Real Market Data
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+Record your wealth. Stocks use real market data from Yahoo Finance.
+                  </p>
+                  <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                    <button
+                      onClick={() => { toggleDark(); setAboutOpen(false); }}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      {dark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600 dark:text-slate-300" />}
+                      <div>
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">{dark ? 'Light mode' : 'Dark mode'}</p>
+                        <p className="text-[10px] text-slate-400 text-left">Switch appearance</p>
+                      </div>
+                    </button>
+                    {user ? (
+                      <button
+                        onClick={() => { signOut(); setAboutOpen(false); }}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                      >
+                        <LogOut className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                        <div>
+                          <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Sign out</p>
+                          <p className="text-[10px] text-slate-400 text-left">{user.name || user.email}</p>
+                        </div>
+                      </button>
+                    ) : supabase ? (
+                      <button
+                        onClick={() => { signInWithGoogle(); setAboutOpen(false); }}
+                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                      >
+                        <LogIn className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                        <div>
+                          <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Sign in</p>
+                          <p className="text-[10px] text-slate-400 text-left">Sync your portfolio</p>
+                        </div>
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                    <a
+                      href="https://github.com/sdaveas/investo-js"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 flex flex-col items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      <Github className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">GitHub</p>
+                    </a>
+                    <a
+                      href="https://buymeacoffee.com/br3gan"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 flex flex-col items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      <Coffee className="w-4 h-4 text-amber-500" />
+                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Buy me a coffee</p>
+                    </a>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
           {/* ── Sidebar ──────────────────────────────────────────────────── */}
           {sidebarOpen && (
           <aside className="lg:col-span-4 space-y-6">
 
-            {/* Add Transaction + Menu */}
-            <div className="flex items-stretch gap-2">
-              <button
-                onClick={() => setAddTxOpen(true)}
-                className="flex-1 py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                New Transaction
-              </button>
-              <div className="relative flex">
-                <button
-                  onClick={() => setAboutOpen((v) => !v)}
-                  className="px-3 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 transition-all flex items-center"
-                  title="Menu"
-                >
-                  <Menu className="w-5 h-5" />
-                </button>
-                {aboutOpen && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setAboutOpen(false)} />
-                    <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 p-5 z-50 space-y-4">
-                      <div className="flex items-center gap-3">
-                        <div className="bg-blue-600 p-2.5 rounded-xl shadow-lg shadow-blue-200 dark:shadow-blue-900">
-                          <BarChart3 className="text-white w-6 h-6" />
-                        </div>
-                        <div>
-                          <h3 className="text-lg font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">What I Have</h3>
-                          <span className="bg-emerald-50 dark:bg-emerald-950 text-emerald-700 text-[9px] font-black px-1.5 py-1 rounded-full inline-flex items-center gap-1 uppercase tracking-wider leading-none">
-                            <Zap className="w-2.5 h-2.5 fill-current flex-shrink-0" /> Real Market Data
-                          </span>
-                        </div>
-                      </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-Record your wealth. Stocks use real market data from Yahoo Finance.
-                      </p>
-                      <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-700">
-                        <button
-                          onClick={() => { toggleDark(); setAboutOpen(false); }}
-                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
-                        >
-                          {dark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600 dark:text-slate-300" />}
-                          <div>
-                            <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">{dark ? 'Light mode' : 'Dark mode'}</p>
-                            <p className="text-[10px] text-slate-400 text-left">Switch appearance</p>
-                          </div>
-                        </button>
-                        {user ? (
-                          <button
-                            onClick={() => { signOut(); setAboutOpen(false); }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
-                          >
-                            <LogOut className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-                            <div>
-                              <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Sign out</p>
-                              <p className="text-[10px] text-slate-400 text-left">{user.name || user.email}</p>
-                            </div>
-                          </button>
-                        ) : supabase ? (
-                          <button
-                            onClick={() => { signInWithGoogle(); setAboutOpen(false); }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
-                          >
-                            <LogIn className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-                            <div>
-                              <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Sign in</p>
-                              <p className="text-[10px] text-slate-400 text-left">Sync your portfolio</p>
-                            </div>
-                          </button>
-                        ) : null}
-                      </div>
-                      <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
-                        <a
-                          href="https://github.com/sdaveas/investo-js"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-1 flex flex-col items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
-                        >
-                          <Github className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-                          <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">GitHub</p>
-                        </a>
-                        <a
-                          href="https://buymeacoffee.com/br3gan"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex-1 flex flex-col items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
-                        >
-                          <Coffee className="w-4 h-4 text-amber-500" />
-                          <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Buy me a coffee</p>
-                        </a>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
             {/* Transaction ledger */}
             {selectedTickers.length > 0 && (
             <div className="bg-slate-900 text-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] shadow-2xl space-y-4">
@@ -1453,8 +1448,8 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 <div className="p-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/20 space-y-3">
                   <div className="flex justify-between items-center">
                     <div>
-                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Total Deposits</p>
-                      <p className="text-xl font-black text-emerald-400">{formatCurrency(totalDeposits)}</p>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Net Invested</p>
+                      <p className="text-xl font-black text-white">{formatCurrency(totalDeposits)}</p>
                     </div>
                     <p className="text-[10px] font-bold text-white/30">{transactions.length} tx · {selectedTickers.length} asset{selectedTickers.length !== 1 ? 's' : ''}</p>
                   </div>
@@ -1474,12 +1469,8 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     <div className="border-t border-white/10" />
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Current Balance</p>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Net Worth</p>
                         <p className={`text-xl font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(currentBalance)}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className={`text-base font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</p>
-                        <p className={`text-[10px] font-bold ${isPositive ? 'text-emerald-500/60' : 'text-rose-500/60'}`}>{isPositive ? '+' : ''}{formatCurrency(pnl)}</p>
                       </div>
                     </div>
                   </>
@@ -1488,7 +1479,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   <div className="flex justify-between items-center">
                     <div>
                       <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Total Return</p>
-                      <p className={`text-xl font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{isPositive ? '+' : ''}{formatCurrency(pnl)}</p>
+                      <p className={`text-xl font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(pnl)}</p>
                     </div>
                     <span className={`text-xs font-black px-2 py-1 rounded-lg ${isPositive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</span>
                   </div>
@@ -1497,6 +1488,14 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
               })()}
             </div>
             )}
+
+            {/* Add Transaction */}
+            <button
+              onClick={() => setAddTxOpen(true)}
+              className="w-full py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              New Transaction
+            </button>
           </aside>
           )}
 
