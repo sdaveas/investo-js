@@ -1298,22 +1298,16 @@ const App = () => {
 Record your wealth. Stocks use real market data from Yahoo Finance.
                   </p>
                   <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-700">
-                    <button
-                      onClick={() => { toggleDark(); setAboutOpen(false); }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
-                    >
-                      {dark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600 dark:text-slate-300" />}
-                      <div>
-                        <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">{dark ? 'Light mode' : 'Dark mode'}</p>
-                        <p className="text-[10px] text-slate-400 text-left">Switch appearance</p>
-                      </div>
-                    </button>
                     {user ? (
                       <button
                         onClick={() => { signOut(); setAboutOpen(false); }}
                         className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
                       >
-                        <LogOut className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                        {user.avatar ? (
+                          <img src={user.avatar} alt="" className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />
+                        ) : (
+                          <LogOut className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                        )}
                         <div>
                           <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Sign out</p>
                           <p className="text-[10px] text-slate-400 text-left">{user.name || user.email}</p>
@@ -1331,6 +1325,16 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                         </div>
                       </button>
                     ) : null}
+                    <button
+                      onClick={() => { toggleDark(); setAboutOpen(false); }}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      {dark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600 dark:text-slate-300" />}
+                      <div>
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">{dark ? 'Light mode' : 'Dark mode'}</p>
+                        <p className="text-[10px] text-slate-400 text-left">Switch appearance</p>
+                      </div>
+                    </button>
                   </div>
                   <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
                     <a
