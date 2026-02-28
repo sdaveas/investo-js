@@ -974,9 +974,9 @@ const App = () => {
     setModalMode('insights');
     
     try {
-      // Build portfolio summary for AI - filter out "Total Portfolio" entry
+      // Build portfolio summary for AI - exclude Total Portfolio and hidden assets
       const summary = stats
-        .filter(stat => stat.ticker !== null) // Exclude Total Portfolio
+        .filter(stat => stat.ticker !== null && !hiddenAssets.has(stat.ticker) && stat.ticker !== CASH_TICKER)
         .map(stat => ({
           name: stat.name,
           ticker: stat.ticker,
@@ -987,14 +987,29 @@ const App = () => {
           maxDrawdown: stat.maxDrawdown,
         }));
 
+      // Compute visible-only totals matching the Overview panel
+      const visTxs = transactions.filter(tx => !hiddenAssets.has(tx.ticker));
       const lastPoint = chartData[chartData.length - 1];
-      const totalValue = lastPoint?.['Total Portfolio'] ?? 0;
+      const visibleStockTickers = [...new Set(visTxs.filter(tx => tx.ticker !== CASH_TICKER).map(tx => tx.ticker))];
+      const stockBuys = visTxs.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
+      const stockSells = visTxs.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0);
+      const stockValue = visibleStockTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
+      const stockReturn = stockValue + stockSells - stockBuys;
+      const bankDeposited = visTxs.reduce((s, tx) => s + (tx.type === 'deposit' ? tx.amount : 0), 0);
+      const bankWithdrawn = visTxs.reduce((s, tx) => s + (tx.type === 'withdraw' ? tx.amount : 0), 0);
+      const bankBalance = bankDeposited - bankWithdrawn;
+      const netWorth = stockValue + bankBalance;
 
       const requestBody = { 
         summary,
-        totalValue,
-        totalInvested: totalDeposits,
-        totalWithdrawals,
+        netWorth,
+        stockValue,
+        stockInvested: stockBuys,
+        stockSold: stockSells,
+        stockReturn,
+        bankBalance,
+        bankDeposited,
+        bankWithdrawn,
       };
 
       console.log('Sending request to generate-insights:', requestBody);
@@ -1022,7 +1037,7 @@ const App = () => {
     } finally {
       setIsGeneratingInsights(false);
     }
-  }, [supabase, stats, chartData, totalDeposits, totalWithdrawals]);
+  }, [supabase, stats, chartData, transactions, hiddenAssets]);
 
   const removeTx = useCallback((txId) => {
     setTransactions((prev) => {
@@ -1135,10 +1150,12 @@ const App = () => {
             isHydratingRef.current = true;
             setTransactions(data.transactions);
             setSelectedAssets(data.selected_assets || {});
+            setHiddenAssets(new Set(data.hidden_assets || []));
             colorIdx.current = data.color_idx || 0;
             nextTxId = Math.max(...data.transactions.map((t) => t.id), 0) + 1;
             localStorage.setItem(LS_KEY, JSON.stringify({
               transactions: data.transactions, selectedAssets: data.selected_assets || {}, colorIdx: data.color_idx || 0,
+              hiddenAssets: data.hidden_assets || [],
             }));
             setTimeout(() => { isHydratingRef.current = false; }, 200);
           }
@@ -1170,6 +1187,7 @@ const App = () => {
           user_id: user.id,
           transactions,
           selected_assets: selectedAssets,
+          hidden_assets: [...hiddenAssets],
           color_idx: colorIdx.current,
           dark_mode: dark,
           updated_at: new Date().toISOString(),
@@ -1178,7 +1196,7 @@ const App = () => {
       setIsSyncing(false);
     }, 1500);
     return () => { clearTimeout(t); setIsSyncing(false); };
-  }, [transactions, selectedAssets, user, dark]);
+  }, [transactions, selectedAssets, hiddenAssets, user, dark]);
 
   const signInWithGoogle = useCallback(async () => {
     if (!supabase) return;

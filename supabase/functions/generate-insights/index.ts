@@ -17,9 +17,14 @@ interface PortfolioAsset {
 
 interface RequestBody {
   summary: PortfolioAsset[];
-  totalValue: number;
-  totalInvested: number;
-  totalWithdrawals: number;
+  netWorth: number;
+  stockValue: number;
+  stockInvested: number;
+  stockSold: number;
+  stockReturn: number;
+  bankBalance: number;
+  bankDeposited: number;
+  bankWithdrawn: number;
 }
 
 Deno.serve(async (req) => {
@@ -29,9 +34,9 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { summary, totalValue, totalInvested, totalWithdrawals }: RequestBody = await req.json();
+    const { summary, netWorth, stockValue, stockInvested, stockSold, stockReturn, bankBalance, bankDeposited, bankWithdrawn }: RequestBody = await req.json();
     
-    if (!summary || summary.length === 0) {
+    if (!summary) {
       throw new Error('No portfolio data provided');
     }
 
@@ -41,6 +46,12 @@ Deno.serve(async (req) => {
     }
 
     // Build the prompt for insights
+    const hasStocks = summary.length > 0;
+    const hasBank = bankBalance > 0 || bankDeposited > 0;
+    const cashPct = netWorth > 0 ? (bankBalance / netWorth * 100) : 0;
+    const stockPct = netWorth > 0 ? (stockValue / netWorth * 100) : 0;
+    const stockReturnPct = stockInvested > 0 ? (stockReturn / stockInvested * 100) : 0;
+
     const assetsText = summary
       .map(s => {
         const gainLoss = s.totalReturn;
@@ -49,28 +60,31 @@ Deno.serve(async (req) => {
       })
       .join('\n');
 
-    const overallGainLoss = totalValue + totalWithdrawals - totalInvested;
-    const overallGainLossText = overallGainLoss >= 0 ? `+$${overallGainLoss.toFixed(0)}` : `-$${Math.abs(overallGainLoss).toFixed(0)}`;
+    const assetHeaders = summary.map(s => `${s.name}:\n[One concise sentence about this stock's performance]`).join('\n');
 
-    const prompt = `You are a financial advisor analyzing an investment portfolio. Provide insights formatted EXACTLY as follows:
+    const prompt = `You are a financial advisor analyzing a personal investment portfolio. Provide insights formatted EXACTLY as follows:
 
 Overview:
-[One sentence about overall portfolio performance using actual dollar amounts]
+[One sentence about overall financial position. Focus on NET WORTH ($${netWorth.toFixed(0)}), asset allocation (${cashPct.toFixed(0)}% cash, ${stockPct.toFixed(0)}% stocks), and financial health. A large cash position is a STRENGTH providing stability and optionality.]
+${hasBank ? `\nBank Account:\nCurrent Balance $${bankBalance.toFixed(0)}; ${bankBalance > stockValue ? 'the largest portion of net worth, providing strong financial stability and dry powder for future opportunities' : 'providing a cash buffer alongside investments'}.` : ''}
+${hasStocks ? `\n${assetHeaders}` : ''}
 
-[For each asset, use the format below - list them in order of dollar performance (highest $ gain first)]
-${summary.map(s => `${s.name}:`).join('\n')}
-[One concise sentence about this asset's performance, focusing on actual dollar gains/losses. If an asset made significant dollar gains, it performed well regardless of percentage.]
-
-IMPORTANT: Judge performance by DOLLAR AMOUNTS gained or lost, not percentages. An asset that gained $10,000 performed much better than one that gained $3,000, regardless of percentages.
+IMPORTANT GUIDELINES:
+- Assess OVERALL FINANCIAL HEALTH, not just stock performance. A portfolio with substantial cash is financially strong even if stocks are down.
+- Cash/bank balance is a STRENGTH — it provides stability, reduces risk, and offers optionality to buy during dips.
+- If stocks are down but the overall net worth is high due to cash reserves, the portfolio is in a GOOD position.
+- Judge stock performance by DOLLAR AMOUNTS, not percentages.
+- Be balanced and constructive. Do NOT catastrophize stock losses if they are a small portion of net worth.
 
 Portfolio Data:
-- Current Total Value: $${totalValue.toFixed(0)}
-- Total Invested: $${totalInvested.toFixed(0)}
-- Total Withdrawals: $${totalWithdrawals.toFixed(0)}
-- Overall Profit: ${overallGainLossText} (${(overallGainLoss / totalInvested * 100).toFixed(1)}%)
+- Net Worth: $${netWorth.toFixed(0)}
+- Cash/Bank Balance: $${bankBalance.toFixed(0)} (${cashPct.toFixed(0)}% of net worth)${bankWithdrawn > 0 ? `\n- Total Deposited: $${bankDeposited.toFixed(0)}, Withdrawn: $${bankWithdrawn.toFixed(0)}` : ''}
+${hasStocks ? `- Stocks Current Value: $${stockValue.toFixed(0)} (${stockPct.toFixed(0)}% of net worth)
+- Total Invested in Stocks: $${stockInvested.toFixed(0)}${stockSold > 0 ? `, Sold: $${stockSold.toFixed(0)}` : ''}
+- Stock Return: ${stockReturn >= 0 ? '+' : '-'}$${Math.abs(stockReturn).toFixed(0)} (${stockReturnPct >= 0 ? '+' : ''}${stockReturnPct.toFixed(1)}%)
 
-Individual Assets:
-${assetsText}`;
+Individual Stocks:
+${assetsText}` : ''}`;
 
     // Call OpenAI API
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -84,7 +98,7 @@ ${assetsText}`;
         messages: [
           {
             role: 'system',
-            content: 'You are a concise financial advisor. Provide brief, actionable portfolio insights in 2-3 sentences.'
+            content: 'You are a concise, balanced financial advisor. Assess the overall financial position holistically — cash reserves are a major strength. Provide brief insights, one sentence per section.'
           },
           {
             role: 'user',
@@ -92,7 +106,7 @@ ${assetsText}`;
           }
         ],
         temperature: 0.7,
-        max_tokens: 200,
+        max_tokens: 250,
       }),
     });
 
