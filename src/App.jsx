@@ -19,6 +19,7 @@ import { toPng } from 'html-to-image';
 import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices } from './api';
 import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
+import { Analytics } from '@vercel/analytics/react';
 
 const COLORS = [
   '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b',
@@ -2716,6 +2717,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
       </footer>
 
       <style>{`.custom-scrollbar::-webkit-scrollbar { width: 4px; } .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }`}</style>
+      <Analytics />
     </div>
   );
 };

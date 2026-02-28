@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",
+    "@vercel/analytics": "^1.6.1",
     "html-to-image": "^1.11.13",
     "lucide-react": "^0.469.0",
     "react": "^19.0.0",
