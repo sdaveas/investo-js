@@ -452,6 +452,7 @@ const App = () => {
   const [overviewOpen, setOverviewOpen] = useState(true);
   const [chartsOpen, setChartsOpen] = useState(true);
   const [summaryOpen, setSummaryOpen] = useState(true);
+  const [statsOpen, setStatsOpen] = useState(true);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [addTxOpen, setAddTxOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -2445,7 +2446,14 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
               const portfolio = stats.find((s) => s.isPortfolio);
               const assets = stats.filter((s) => !s.isPortfolio);
               return (
-                <div ref={statsRef} className="space-y-6">
+                <div ref={statsRef} className="bg-white dark:bg-slate-800 p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700">
+                  <button onClick={() => setStatsOpen(v => !v)} className="w-full flex items-center justify-between">
+                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                      <DollarSign className="w-4 h-4" /> Stats
+                    </h3>
+                    <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${statsOpen ? 'rotate-90' : ''}`} />
+                  </button>
+                  {statsOpen && <div className="space-y-6 mt-4">
                   {portfolio && (
                     <div className="p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-slate-900 text-white border-slate-800 shadow-2xl transition-all hover:translate-y-[-4px]">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -2493,6 +2501,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       ))}
                     </div>
                   )}
+                </div>}
                 </div>
               );
             })()}
