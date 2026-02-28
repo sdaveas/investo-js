@@ -2960,14 +2960,26 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
-                  <input type="number" value={modalAmount || ''} onChange={(e) => {
+                  <input 
+                    type="text" 
+                    inputMode="decimal"
+                    value={modalAmount === '' ? '' : modalAmount} 
+                    onChange={(e) => {
                       const value = e.target.value;
+                      // Allow empty
                       if (value === '') {
                         setModalAmount('');
-                      } else {
-                        const numValue = Number(value);
-                        if (!isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
+                        return;
+                      }
+                      // Allow partial number entry (e.g., "10.", "100")
+                      if (/^\d*\.?\d*$/.test(value)) {
+                        // If it's a valid number or partial number, store as is
+                        const numValue = parseFloat(value);
+                        if (!isNaN(numValue)) {
                           setModalAmount(numValue);
+                        } else {
+                          // Allow typing partial numbers like "10."
+                          setModalAmount(value);
                         }
                       }
                     }}
