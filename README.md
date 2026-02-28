@@ -1,6 +1,6 @@
 # Investo
 
-**[Live Demo →](https://whatihave.xyz)** · [Buy me a coffee ☕](https://buymeacoffee.com/br3gan)
+**Try it now at [whatihave.xyz](https://whatihave.xyz)**
 
 An investment portfolio simulator that uses real market data from Yahoo Finance. Build a virtual portfolio by recording buy/sell transactions and track performance over time.
 
