@@ -11,9 +11,9 @@ import {
   DollarSign, AlertCircle, Search, Loader2,
   History, Zap, CheckCircle2, X,
   PanelLeftClose, PanelLeftOpen,
-  ShoppingCart, TrendingDown, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
-  LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText,
-  ChevronLeft, ChevronRight, Share2, Camera, Check, Link, ExternalLink,
+  ShoppingCart, HandCoins, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
+  LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText, Menu, Coffee,
+  ChevronLeft, ChevronRight, Share2, Camera, Check, Link, ExternalLink, Maximize2, Minimize2,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices } from './api';
@@ -32,6 +32,14 @@ const formatCurrencyFn = new Intl.NumberFormat('en-US', {
 const formatCurrency = (val) => formatCurrencyFn.format(val);
 
 const formatPercent = (val) => `${(val * 100).toFixed(1)}%`;
+
+const formatShort = (val) => {
+  const abs = Math.abs(val);
+  const sign = val < 0 ? '-' : '';
+  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(0)}k`;
+  return `${sign}$${abs.toFixed(0)}`;
+};
 
 const formatShortDate = (d) =>
   new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -195,7 +203,7 @@ const composeShareImage = (rawBlob, isDark) =>
       const fontSize = Math.round(w * 0.022);
       ctx.font = `800 ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`;
       ctx.fillStyle = isDark ? 'rgba(148,163,184,0.35)' : 'rgba(100,116,139,0.3)';
-      ctx.fillText('INVESTO', w / 2, brandY + fontSize * 0.4);
+      ctx.fillText('WHAT I HAVE', w / 2, brandY + fontSize * 0.4);
       // Accent dot
       ctx.beginPath();
       ctx.arc(w / 2 - fontSize * 2.8, brandY + fontSize * 0.12, 4, 0, Math.PI * 2);
@@ -409,6 +417,8 @@ const App = () => {
   const isHydratingRef = useRef(false);
 
   const [colorPickerTicker, setColorPickerTicker] = useState(null);
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [addTxOpen, setAddTxOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareStatus, setShareStatus] = useState(null); // 'capturing' | 'done' | 'error' | null
   const [shareResult, setShareResult] = useState(null); // { url, blob }
@@ -848,7 +858,7 @@ const App = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'investo-transactions.csv';
+    a.download = 'what-i-have-transactions.csv';
     a.click();
     URL.revokeObjectURL(url);
   }, [transactions, selectedAssets]);
@@ -1259,180 +1269,123 @@ const App = () => {
     <div className={`min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8${dark ? ' dark' : ''}`}>
       <div className="max-w-7xl mx-auto space-y-8">
 
-        {/* Header */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => setSidebarOpen((v) => !v)}
-              className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 transition-all"
-              title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
-            >
-              {sidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeftOpen className="w-5 h-5" />}
-            </button>
-            <div className="bg-blue-600 p-3 rounded-2xl shadow-lg shadow-blue-200 dark:shadow-blue-900">
-              <BarChart3 className="text-white w-8 h-8" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">Investo</h1>
-              <span className="bg-emerald-50 dark:bg-emerald-950 text-emerald-700 text-[9px] font-black px-2 py-0.5 rounded-full flex items-center gap-1 uppercase tracking-wider w-fit mt-0.5">
-                <Zap className="w-2 h-2 fill-current" /> Real Market Data
-              </span>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            {isSimulating && <Loader2 className="w-5 h-5 animate-spin text-blue-500" />}
-            {totalDeposits > 0 && (() => {
-              const lastPoint = chartData[chartData.length - 1];
-              const currentBalance = lastPoint?.['Total Portfolio'] ?? selectedTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
-              const pnl = currentBalance + totalWithdrawals - totalDeposits;
-              const pnlPct = totalDeposits > 0 ? (pnl / totalDeposits) * 100 : 0;
-              const isPositive = pnl >= 0;
-              return (
-              <div className="hidden sm:flex items-center gap-4">
-                <div className="text-right">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Deposits</p>
-                  <p className="text-lg font-black text-blue-600">{formatCurrency(totalDeposits)}</p>
-                </div>
-                {totalWithdrawals > 0 && (
-                <>
-                  <div className="w-px h-8 bg-slate-200 dark:bg-slate-700" />
-                  <div className="text-right">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Withdrawals</p>
-                    <p className="text-lg font-black text-blue-600">{formatCurrency(totalWithdrawals)}</p>
-                  </div>
-                </>
-                )}
-                {currentBalance > 0 && (
-                <>
-                  <div className="w-px h-8 bg-slate-200 dark:bg-slate-700" />
-                  <div className="text-right">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Balance</p>
-                    <p className={`text-lg font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>{formatCurrency(currentBalance)}</p>
-                  </div>
-                </>
-                )}
-                <div className="w-px h-8 bg-slate-200 dark:bg-slate-700" />
-                <div className="text-right">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Return</p>
-                  <p className={`text-lg font-black ${isPositive ? 'text-emerald-600' : 'text-rose-600'}`}>{isPositive ? '+' : ''}{formatCurrency(pnl)}</p>
-                </div>
-                <span className={`text-xs font-black px-2 py-1 rounded-lg ${isPositive ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-600' : 'bg-rose-50 dark:bg-rose-950 text-rose-600'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</span>
-              </div>
-              );
-            })()}
-          </div>
-          {/* Auth + Theme */}
-          <div className="flex items-center gap-2">
-            {user ? (
-              <>
-                {isSyncing && <Cloud className="w-4 h-4 text-blue-400 animate-pulse" />}
-                {user.avatar ? (
-                  <img src={user.avatar} className="w-8 h-8 rounded-full" alt="" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-black">
-                    {user.name?.[0]?.toUpperCase()}
-                  </div>
-                )}
-                <button onClick={signOut} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 transition-all" title="Sign out">
-                  <LogOut className="w-4 h-4" />
-                </button>
-                <button onClick={toggleDark} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 dark:text-slate-400 transition-all" title={dark ? 'Light mode' : 'Dark mode'}>
-                  {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-                </button>
-              </>
-            ) : supabase ? (
-              <div className="flex items-center gap-2">
-                <button onClick={toggleDark} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 dark:text-slate-400 transition-all" title={dark ? 'Light mode' : 'Dark mode'}>
-                  {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-                </button>
-                <button onClick={signInWithGoogle} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 font-bold text-xs transition-all">
-                  <LogIn className="w-4 h-4" /> Sign in
-                </button>
-              </div>
-            ) : (
-              <button onClick={toggleDark} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 dark:text-slate-400 transition-all" title={dark ? 'Light mode' : 'Dark mode'}>
-                {dark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-              </button>
-            )}
-          </div>
-        </header>
-
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
           {/* ── Sidebar ──────────────────────────────────────────────────── */}
           {sidebarOpen && (
           <aside className="lg:col-span-4 space-y-6">
 
-            {/* AI Quick Add */}
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 pl-1">
-                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Describe transactions naturally</span>
-              </div>
-              <div className="relative">
-                <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
-                <input
-                  type="text"
-                  value={quickAddText}
-                  onChange={(e) => setQuickAddText(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && quickAddText.trim() && handleQuickAdd()}
-                  placeholder='sold half my apple last week'
-                  disabled={quickAddStatus === 'processing'}
-                  className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl py-3 pl-10 pr-12 text-sm font-medium focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none shadow-sm transition-all placeholder:text-slate-300 dark:placeholder:text-slate-600 disabled:opacity-60"
-                />
+            {/* Add Transaction + Menu */}
+            <div className="flex items-stretch gap-2">
+              <button
+                onClick={() => setAddTxOpen(true)}
+                className="flex-1 py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                New Transaction
+              </button>
+              <div className="relative flex">
                 <button
-                  onClick={() => setQuickAddVerify((v) => !v)}
-                  className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg transition-colors ${quickAddVerify ? 'text-violet-500 hover:text-violet-600' : 'text-slate-300 hover:text-slate-400'}`}
-                  title="Verify transactions before adding"
+                  onClick={() => setAboutOpen((v) => !v)}
+                  className="px-3 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 transition-all flex items-center"
+                  title="Menu"
                 >
-                  {quickAddStatus === 'processing'
-                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                    : <ShieldCheck className="w-4 h-4" />}
+                  <Menu className="w-5 h-5" />
                 </button>
+                {aboutOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setAboutOpen(false)} />
+                    <div className="absolute right-0 top-full mt-2 w-72 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 p-5 z-50 space-y-4">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-blue-600 p-2.5 rounded-xl shadow-lg shadow-blue-200 dark:shadow-blue-900">
+                          <BarChart3 className="text-white w-6 h-6" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">What I Have</h3>
+                          <span className="bg-emerald-50 dark:bg-emerald-950 text-emerald-700 text-[9px] font-black px-1.5 py-1 rounded-full inline-flex items-center gap-1 uppercase tracking-wider leading-none">
+                            <Zap className="w-2.5 h-2.5 fill-current flex-shrink-0" /> Real Market Data
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+Record your wealth. Stocks use real market data from Yahoo Finance.
+                      </p>
+                      <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                        <button
+                          onClick={() => { toggleDark(); setAboutOpen(false); }}
+                          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                        >
+                          {dark ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-600 dark:text-slate-300" />}
+                          <div>
+                            <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">{dark ? 'Light mode' : 'Dark mode'}</p>
+                            <p className="text-[10px] text-slate-400 text-left">Switch appearance</p>
+                          </div>
+                        </button>
+                        {user ? (
+                          <button
+                            onClick={() => { signOut(); setAboutOpen(false); }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                          >
+                            <LogOut className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                            <div>
+                              <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Sign out</p>
+                              <p className="text-[10px] text-slate-400 text-left">{user.name || user.email}</p>
+                            </div>
+                          </button>
+                        ) : supabase ? (
+                          <button
+                            onClick={() => { signInWithGoogle(); setAboutOpen(false); }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                          >
+                            <LogIn className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                            <div>
+                              <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Sign in</p>
+                              <p className="text-[10px] text-slate-400 text-left">Sync your portfolio</p>
+                            </div>
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                        <a
+                          href="https://github.com/sdaveas/investo-js"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 flex flex-col items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                        >
+                          <Github className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                          <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">GitHub</p>
+                        </a>
+                        <a
+                          href="https://buymeacoffee.com/br3gan"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 flex flex-col items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                        >
+                          <Coffee className="w-4 h-4 text-amber-500" />
+                          <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Buy me a coffee</p>
+                        </a>
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
-            </div>
-            {quickAddPreview && (
-              <div className={`flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${quickAddPreview.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-200 text-emerald-700' : 'bg-rose-50 dark:bg-rose-950 border-rose-200 text-rose-700'}`}>
-                <span className="uppercase text-[10px] font-black w-8">{quickAddPreview.type}</span>
-                <span className="flex-1 truncate min-w-[100px]">{quickAddPreview.name} ({quickAddPreview.ticker})</span>
-                <span>{formatCurrency(quickAddPreview.amount)}</span>
-                <span className="text-slate-400 text-[10px]">{formatShortDate(quickAddPreview.date)}</span>
-                <button onClick={confirmQuickAdd} className="p-1 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors" title="Confirm">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                </button>
-                <button onClick={() => setQuickAddPreview(null)} className="p-1 rounded-lg bg-slate-200 text-slate-500 hover:bg-slate-300 transition-colors" title="Cancel">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-            {quickAddStatus && quickAddStatus.startsWith('error') && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold bg-rose-50 dark:bg-rose-950 text-rose-700">
-                <AlertCircle className="w-3 h-3 shrink-0" />
-                {quickAddStatus.split(':').slice(1).join(':')}
-              </div>
-            )}
-
-            {/* Record Buy / Record Sell buttons */}
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={openBuyModal}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
-              >
-                <ShoppingCart className="w-4 h-4" /> Record Buy
-              </button>
-              <button
-                onClick={() => openSellModal()}
-                disabled={ownedTickers.length === 0}
-                className="bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95"
-              >
-                <TrendingDown className="w-4 h-4" /> Record Sell
-              </button>
             </div>
             {/* Transaction ledger */}
             {selectedTickers.length > 0 && (
             <div className="bg-slate-900 text-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] shadow-2xl space-y-4">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                <History className="w-4 h-4" /> Transactions
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                  <History className="w-4 h-4" /> Transactions
+                </h3>
+                {supabase && stats.length > 0 && (
+                  <button
+                    onClick={generateAIInsights}
+                    disabled={isGeneratingInsights}
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-500/20 text-violet-400 hover:bg-violet-500/30 transition-colors disabled:opacity-50 text-[10px] font-bold"
+                  >
+                    {isGeneratingInsights ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Insights
+                  </button>
+                )}
+              </div>
 
               <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
                 {selectedTickers.map((ticker) => {
@@ -1525,7 +1478,7 @@ const App = () => {
                         <p className={`text-xl font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(currentBalance)}</p>
                       </div>
                       <div className="text-right">
-                        <p className={`text-sm font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</p>
+                        <p className={`text-base font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</p>
                         <p className={`text-[10px] font-bold ${isPositive ? 'text-emerald-500/60' : 'text-rose-500/60'}`}>{isPositive ? '+' : ''}{formatCurrency(pnl)}</p>
                       </div>
                     </div>
@@ -1543,29 +1496,6 @@ const App = () => {
                 );
               })()}
             </div>
-            )}
-            <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => { setImportText(''); setModalMode('import'); }}
-                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 active:scale-95">
-                <Upload className="w-3.5 h-3.5" /> Import
-              </button>
-              <button onClick={exportCSV} disabled={transactions.length === 0}
-                className="py-2 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 disabled:opacity-40 active:scale-95">
-                <Download className="w-3.5 h-3.5" /> Export
-              </button>
-            </div>
-            {supabase && stats.length > 0 && (
-              <button
-                onClick={generateAIInsights}
-                disabled={isGeneratingInsights}
-                className="w-full py-3 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-violet-600 to-blue-600 hover:from-violet-700 hover:to-blue-700 text-white shadow-lg disabled:opacity-60 active:scale-95"
-              >
-                {isGeneratingInsights ? (
-                  <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
-                ) : (
-                  <><Sparkles className="w-4 h-4" /> AI Insights</>
-                )}
-              </button>
             )}
           </aside>
           )}
@@ -1650,6 +1580,21 @@ const App = () => {
                       <Share2 className="w-4 h-4" />
                     </button>
                   )}
+                  <button
+                    onClick={() => {
+                      const el = chartRef.current;
+                      if (!el) return;
+                      if (document.fullscreenElement) {
+                        document.exitFullscreen();
+                      } else {
+                        el.requestFullscreen();
+                      }
+                    }}
+                    className="hidden sm:inline-flex p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
+                    title="Fullscreen"
+                  >
+                    {document.fullscreenElement ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                  </button>
                   {chartData.length > 0 && chartTickers.length > 0 && (
                     <div className="flex items-center gap-1">
                       <button
@@ -2181,6 +2126,105 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
         )}
       </div>
 
+      {/* ── New Transaction Modal ─────────────────────────────────────────── */}
+      {addTxOpen && !modalMode && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={() => setAddTxOpen(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-sm mx-4 p-6 space-y-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 flex items-center gap-2">
+                New Transaction
+              </h3>
+              <button onClick={() => setAddTxOpen(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            {/* Quick Add */}
+            <div className="space-y-1.5">
+<p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Describe your transaction</p>
+            <div className="relative">
+              <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-violet-400" />
+              <input
+                type="text"
+                value={quickAddText}
+                onChange={(e) => setQuickAddText(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && quickAddText.trim() && handleQuickAdd()}
+                placeholder='e.g. bought google 1/1/2025 $1000'
+                disabled={quickAddStatus === 'processing'}
+                className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-10 pr-12 text-sm font-medium focus:ring-2 focus:ring-violet-500 outline-none transition-all placeholder:text-slate-400 dark:placeholder:text-slate-500 disabled:opacity-60"
+              />
+              <button
+                onClick={() => setQuickAddVerify((v) => !v)}
+                className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-lg transition-colors ${quickAddVerify ? 'text-violet-500 hover:text-violet-600' : 'text-slate-300 hover:text-slate-400'}`}
+                title="Verify transactions before adding"
+              >
+                {quickAddStatus === 'processing'
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <ShieldCheck className="w-4 h-4" />}
+              </button>
+            </div>
+            </div>
+            {quickAddPreview && (
+              <div className={`flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${quickAddPreview.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-200 text-emerald-700' : 'bg-rose-50 dark:bg-rose-950 border-rose-200 text-rose-700'}`}>
+                <span className="uppercase text-[10px] font-black w-8">{quickAddPreview.type}</span>
+                <span className="flex-1 truncate min-w-[100px]">{quickAddPreview.name} ({quickAddPreview.ticker})</span>
+                <span>{formatCurrency(quickAddPreview.amount)}</span>
+                <span className="text-slate-400 text-[10px]">{formatShortDate(quickAddPreview.date)}</span>
+                <button onClick={confirmQuickAdd} className="p-1 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors" title="Confirm">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={() => setQuickAddPreview(null)} className="p-1 rounded-lg bg-slate-200 text-slate-500 hover:bg-slate-300 transition-colors" title="Cancel">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+            {quickAddStatus && quickAddStatus.startsWith('error') && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold bg-rose-50 dark:bg-rose-950 text-rose-700">
+                <AlertCircle className="w-3 h-3 shrink-0" />
+                {quickAddStatus.split(':').slice(1).join(':')}
+              </div>
+            )}
+            <div className="border-t border-slate-100 dark:border-slate-700" />
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => { setAddTxOpen(false); openBuyModal(); }}
+                className="flex flex-col items-center gap-3 p-5 rounded-2xl bg-emerald-50 dark:bg-emerald-950 border border-emerald-100 dark:border-emerald-900 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-all active:scale-95"
+              >
+                <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center shadow-lg">
+                  <ShoppingCart className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-sm font-bold text-emerald-700 dark:text-emerald-400">Buy</span>
+              </button>
+              <button
+                onClick={() => { setAddTxOpen(false); openSellModal(); }}
+                disabled={ownedTickers.length === 0}
+                className="flex flex-col items-center gap-3 p-5 rounded-2xl bg-rose-50 dark:bg-rose-950 border border-rose-100 dark:border-rose-900 hover:bg-rose-100 dark:hover:bg-rose-900 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <div className="w-12 h-12 rounded-xl bg-rose-600 flex items-center justify-center shadow-lg">
+                  <HandCoins className="w-5 h-5 text-white" />
+                </div>
+                <span className="text-sm font-bold text-rose-700 dark:text-rose-400">Sell</span>
+              </button>
+            </div>
+            <div className="border-t border-slate-100 dark:border-slate-700" />
+            <div className="space-y-2">
+              <button
+                onClick={() => { setAddTxOpen(false); setImportText(''); setModalMode('import'); }}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 text-xs font-bold transition-all active:scale-95"
+              >
+                <Upload className="w-3.5 h-3.5" /> Import
+              </button>
+              <button
+                onClick={() => { setAddTxOpen(false); exportCSV(); }}
+                disabled={transactions.length === 0}
+                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 text-xs font-bold transition-all active:scale-95 disabled:opacity-40"
+              >
+                <Download className="w-3.5 h-3.5" /> Export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Buy Modal ────────────────────────────────────────────────────── */}
       {modalMode === 'buy' && (
         <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
@@ -2202,7 +2246,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                       {stagedAsset.symbol.slice(0, 3)}
                     </div>
                     <div className="min-w-0">
-                      <h4 className="text-sm font-black truncate">{stagedAsset.name}</h4>
+                      <h4 className="text-base font-black truncate">{stagedAsset.name}</h4>
                       <p className="text-[10px] font-bold text-emerald-600 uppercase">{stagedAsset.symbol}</p>
                     </div>
                   </div>
@@ -2306,7 +2350,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
           <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-md mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold uppercase tracking-widest text-rose-600 flex items-center gap-2">
-                <TrendingDown className="w-4 h-4" /> Record Sale
+                <HandCoins className="w-4 h-4" /> Record Sale
               </h3>
               <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 dark:text-slate-300 p-1">
                 <X className="w-5 h-5" />
@@ -2324,7 +2368,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                       {sellTicker.slice(0, 3)}
                     </div>
                     <div className="min-w-0">
-                      <h4 className="text-sm font-black truncate">{selectedAssets[sellTicker]?.name}</h4>
+                      <h4 className="text-base font-black truncate">{selectedAssets[sellTicker]?.name}</h4>
                       <p className="text-[10px] font-bold text-rose-500 uppercase">{sellTicker} · Available: {formatCurrency(Math.max(0, availableBalance))}</p>
                     </div>
                   </div>
@@ -2410,7 +2454,7 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   {editingTx.ticker.slice(0, 3)}
                 </div>
                 <div className="min-w-0">
-                  <h4 className="text-sm font-black truncate">{selectedAssets[editingTx.ticker]?.name}</h4>
+                  <h4 className="text-base font-black truncate">{selectedAssets[editingTx.ticker]?.name}</h4>
                   <p className={`text-[10px] font-bold uppercase ${editingTx.type === 'buy' ? 'text-emerald-600' : 'text-rose-600'}`}>{editingTx.type} · {editingTx.ticker}</p>
                 </div>
               </div>
