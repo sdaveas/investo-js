@@ -604,12 +604,15 @@ const App = () => {
   const saveEdit = useCallback((overrideAmount = null, overrideDate = null, overridePrice = null) => {
     if (!editingTx) return;
     const rawAmount = overrideAmount !== null ? overrideAmount : modalAmount;
+    console.log('[SAVE] saveEdit called:', { rawAmount, modalAmount, editingTx });
     // Convert to number if it's a string
     const numAmount = typeof rawAmount === 'string' ? Number(rawAmount) : rawAmount;
+    console.log('[SAVE] Converted to number:', { numAmount, isNaN: isNaN(numAmount), isFinite: isFinite(numAmount) });
     // Ensure amount is a valid number
     const amountToSave = (!isNaN(numAmount) && isFinite(numAmount) && numAmount > 0) 
       ? numAmount 
       : (editingTx.amount || DEFAULT_AMOUNT);
+    console.log('[SAVE] Amount to save:', amountToSave);
     const dateToSave = overrideDate !== null ? overrideDate : modalDate;
     const priceToSave = overridePrice !== null ? overridePrice : modalPrice;
     setTransactions((prev) =>
@@ -618,6 +621,7 @@ const App = () => {
         const updated = { ...tx, amount: amountToSave, date: dateToSave };
         if (priceToSave) updated.price = priceToSave;
         else delete updated.price;
+        console.log('[SAVE] Updated transaction:', updated);
         return updated;
       }),
     );
@@ -2966,21 +2970,28 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     value={modalAmount === '' ? '' : modalAmount} 
                     onChange={(e) => {
                       const value = e.target.value;
+                      console.log('[EDIT] Input changed:', { value, currentModalAmount: modalAmount });
                       // Allow empty
                       if (value === '') {
+                        console.log('[EDIT] Setting to empty string');
                         setModalAmount('');
                         return;
                       }
                       // Allow partial number entry (e.g., "10.", "100")
                       if (/^\d*\.?\d*$/.test(value)) {
+                        console.log('[EDIT] Valid number format');
                         // If it's a valid number or partial number, store as is
                         const numValue = parseFloat(value);
                         if (!isNaN(numValue)) {
+                          console.log('[EDIT] Setting modalAmount to number:', numValue);
                           setModalAmount(numValue);
                         } else {
                           // Allow typing partial numbers like "10."
+                          console.log('[EDIT] Setting modalAmount to string:', value);
                           setModalAmount(value);
                         }
+                      } else {
+                        console.log('[EDIT] Invalid format, ignoring');
                       }
                     }}
                     autoFocus
@@ -2997,7 +3008,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Cancel</button>
-              <button onClick={saveEdit} disabled={!modalAmount || modalAmount <= 0}
+              <button onClick={() => saveEdit()} disabled={!modalAmount || modalAmount <= 0}
                 className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
                 Save
               </button>
