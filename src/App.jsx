@@ -450,6 +450,7 @@ const App = () => {
   const [colorPickerTicker, setColorPickerTicker] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [overviewOpen, setOverviewOpen] = useState(true);
+  const [chartsOpen, setChartsOpen] = useState(true);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [addTxOpen, setAddTxOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -1845,8 +1846,15 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
           <main className={`${sidebarOpen ? 'lg:col-span-8' : 'lg:col-span-12'} space-y-8`}>
 
             {/* Chart */}
-            <div ref={chartRef} className="bg-white dark:bg-slate-800 p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 h-[380px] sm:h-[450px] md:h-[550px] flex flex-col overflow-hidden relative">
-              <div className="flex flex-wrap justify-between items-start mb-4 sm:mb-8 gap-y-3 relative z-10">
+            <div ref={chartRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 ${chartsOpen ? 'h-[380px] sm:h-[450px] md:h-[550px]' : ''} flex flex-col overflow-hidden relative`}>
+              <button onClick={() => setChartsOpen(v => !v)} className="w-full flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4" /> Graphs
+                </h3>
+                <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${chartsOpen ? 'rotate-90' : ''}`} />
+              </button>
+              {chartsOpen && <>
+              <div className="flex flex-wrap justify-between items-start mb-4 sm:mb-8 gap-y-3 relative z-10 mt-4">
                 <div>
                   <h2 className="text-base sm:text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">
                     {['Net Worth', 'Performance', 'Transaction History', 'Allocation', 'Deposits vs Value', 'Returns by Asset', 'Asset Price', 'Bank Balance'][chartPage]}
@@ -2428,6 +2436,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   );
                 })()}
               </div>
+              </>}
             </div>
 
             {/* Stats Cards */}
