@@ -1848,7 +1848,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
           <main className={`${sidebarOpen ? 'lg:col-span-8' : 'lg:col-span-12'} space-y-8`}>
 
             {/* Chart */}
-            <div ref={chartRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 ${chartsOpen ? 'h-[380px] sm:h-[450px] md:h-[550px]' : ''} flex flex-col overflow-hidden relative`}>
+            <div ref={chartRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 ${chartsOpen ? 'md:p-8' : ''} rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 ${chartsOpen ? 'h-[380px] sm:h-[450px] md:h-[550px]' : ''} flex flex-col overflow-hidden relative`}>
               <button onClick={() => setChartsOpen(v => !v)} className="w-full flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
                   <BarChart3 className="w-4 h-4" /> Graphs
@@ -2446,7 +2446,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
               const portfolio = stats.find((s) => s.isPortfolio);
               const assets = stats.filter((s) => !s.isPortfolio);
               return (
-                <div ref={statsRef} className="bg-white dark:bg-slate-800 p-4 sm:p-6 md:p-8 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700">
+                <div ref={statsRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 ${statsOpen ? 'md:p-8' : ''} rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700`}>
                   <button onClick={() => setStatsOpen(v => !v)} className="w-full flex items-center justify-between">
                     <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
                       <DollarSign className="w-4 h-4" /> Stats
@@ -2512,7 +2512,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
         {/* Summary Table — full width */}
         {stats.length > 0 && (
           <div ref={tableRef} className="bg-white dark:bg-slate-800 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-            <div className="px-4 py-4 sm:px-8 sm:py-6">
+            <div className="p-4 sm:p-6">
               <button onClick={() => setSummaryOpen(v => !v)} className="w-full flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
                   <History className="w-4 h-4" /> Summary
