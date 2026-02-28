@@ -14,7 +14,7 @@ import {
   ShoppingCart, HandCoins, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
   LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText, Menu, Coffee,
   ChevronLeft, ChevronRight, Share2, Camera, Check, Link, ExternalLink, Maximize2, Minimize2,
-  Landmark,
+  Landmark, Eye, EyeOff,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices } from './api';
@@ -52,6 +52,7 @@ const TODAY = new Date().toISOString().split('T')[0];
 
 const CASH_TICKER = '_CASH';
 const isCashTx = (tx) => tx.ticker === CASH_TICKER;
+const displayTicker = (t) => t === CASH_TICKER ? 'CASH' : t;
 
 const MONTHS_MAP = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
 
@@ -407,6 +408,9 @@ const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [hiddenSeries, setHiddenSeries] = useState(new Set());
   const [showMarkers, setShowMarkers] = useState(true);
+  const [hiddenAssets, setHiddenAssets] = useState(() => {
+    try { return new Set(savedPortfolio?.hiddenAssets || []); } catch { return new Set(); }
+  });
   const [chartPage, setChartPage] = useState(0); // 0 = net worth, 1 = performance, 2 = line, 3 = pie, 4 = deposits vs value, 5 = returns by asset, 6 = asset price
   const CHART_PAGES = 8;
   const CHART_CATEGORIES = { all: [0, 3, 4], stocks: [1, 2, 5, 6], bank: [7] };
@@ -506,7 +510,12 @@ const App = () => {
     });
   }, [selectedTickers, chartData, txByTicker]);
 
-  // ─── Search ────────────────────────────────────────────────────────────────
+  const visibleTransactions = useMemo(
+    () => transactions.filter((tx) => !hiddenAssets.has(tx.ticker)),
+    [transactions, hiddenAssets],
+  );
+
+  // ─── Search
 
   const handleSearch = useCallback(async (query) => {
     const q = query.trim();
@@ -1034,7 +1043,16 @@ const App = () => {
     });
   }, []);
 
-  // ─── Persistence ───────────────────────────────────────────────────────
+  const toggleHideAsset = useCallback((ticker) => {
+    setHiddenAssets((prev) => {
+      const next = new Set(prev);
+      if (next.has(ticker)) next.delete(ticker);
+      else next.add(ticker);
+      return next;
+    });
+  }, []);
+
+  // ─── Persistence ───────────────────────────────────────────────────────────────
 
   // Save to localStorage on every change
   useEffect(() => {
@@ -1070,7 +1088,8 @@ const App = () => {
       const dataToSave = {
         transactions: cleanTransactions,
         selectedAssets: cleanSelectedAssets,
-        colorIdx: typeof colorIdx.current === 'number' ? colorIdx.current : 0
+        colorIdx: typeof colorIdx.current === 'number' ? colorIdx.current : 0,
+        hiddenAssets: [...hiddenAssets],
       };
       
       localStorage.setItem(LS_KEY, JSON.stringify(dataToSave));
@@ -1088,14 +1107,15 @@ const App = () => {
             ...(price != null && { price: Number(price) })
           })),
           selectedAssets: {},
-          colorIdx: 0
+          colorIdx: 0,
+          hiddenAssets: [...hiddenAssets],
         };
         localStorage.setItem(LS_KEY, JSON.stringify(minimalData));
       } catch (fallbackError) {
         console.error('Fallback save also failed:', fallbackError);
       }
     }
-  }, [transactions, selectedAssets]);
+  }, [transactions, selectedAssets, hiddenAssets]);
 
   // Auth state listener
   useEffect(() => {
@@ -1172,6 +1192,7 @@ const App = () => {
     setUser(null);
     setTransactions([]);
     setSelectedAssets({});
+    setHiddenAssets(new Set());
     setPriceCache(null);
     setChartData([]);
     setStats([]);
@@ -1274,13 +1295,13 @@ const App = () => {
   // ─── Recompute chart ──────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!livePriceCache || transactions.length === 0) {
+    if (!livePriceCache || visibleTransactions.length === 0) {
       setChartData([]);
       setStats([]);
       return;
     }
 
-    const activeTx = transactions.filter((tx) => livePriceCache[tx.ticker]?.length > 0);
+    const activeTx = visibleTransactions.filter((tx) => livePriceCache[tx.ticker]?.length > 0);
     if (activeTx.length === 0) { setChartData([]); setStats([]); return; }
 
     const data = simulate(livePriceCache, activeTx);
@@ -1294,9 +1315,9 @@ const App = () => {
       Object.entries(selectedAssets).map(([t, a]) => [t, a.color]),
     );
     setStats(computeStats(data, tickers, activeTx, names, colors));
-  }, [livePriceCache, transactions, selectedAssets]);
+  }, [livePriceCache, visibleTransactions, selectedAssets]);
 
-  const chartTickers = selectedTickers.filter((t) => livePriceCache?.[t]);
+  const chartTickers = selectedTickers.filter((t) => !hiddenAssets.has(t) && livePriceCache?.[t]);
 
   const chartRangeCutoff = useMemo(() => {
     if (chartRange === 'ALL') return null;
@@ -1320,10 +1341,10 @@ const App = () => {
   }, [chartData, chartRangeCutoff]);
 
   const oldestStockTxDate = useMemo(() => {
-    const stockTxs = transactions.filter(tx => tx.ticker !== CASH_TICKER);
+    const stockTxs = visibleTransactions.filter(tx => tx.ticker !== CASH_TICKER);
     if (stockTxs.length === 0) return null;
     return stockTxs.reduce((min, tx) => tx.date < min ? tx.date : min, stockTxs[0].date);
-  }, [transactions]);
+  }, [visibleTransactions]);
 
   const filteredStockChartData = useMemo(() => {
     if (!oldestStockTxDate) return filteredChartData;
@@ -1363,7 +1384,7 @@ const App = () => {
     const dateIndex = new Map(chartData.map((p, i) => [p.date, i]));
     const asset = [];
     const portfolio = [];
-    transactions.forEach((tx) => {
+    visibleTransactions.forEach((tx) => {
       let idx = dateIndex.get(tx.date);
       if (idx == null) idx = chartData.findIndex((p) => p.date >= tx.date);
       if (idx == null || idx < 0) return;
@@ -1378,7 +1399,7 @@ const App = () => {
       }
     });
     return { assetMarkers: asset, portfolioMarkers: portfolio };
-  }, [chartData, transactions]);
+  }, [chartData, visibleTransactions]);
 
   const handleLegendClick = useCallback((e) => {
     const key = e.dataKey;
@@ -1557,16 +1578,18 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
 
               {overviewOpen && (() => {
                 const lastPoint = chartData[chartData.length - 1];
+                const visTxs = transactions.filter(tx => !hiddenAssets.has(tx.ticker));
                 // Stock calculations
-                const stockBuys = transactions.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
-                const stockSells = transactions.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0);
-                const stockValue = selectedTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
+                const visibleStockTickers = selectedTickers.filter(t => !hiddenAssets.has(t));
+                const stockBuys = visTxs.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
+                const stockSells = visTxs.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0);
+                const stockValue = visibleStockTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
                 const stockReturn = stockValue + stockSells - stockBuys;
                 const stockReturnPct = stockBuys > 0 ? (stockReturn / stockBuys) * 100 : 0;
                 const stockPositive = stockReturn >= 0;
                 // Bank calculations
-                const bankDeposited = transactions.reduce((s, tx) => s + (tx.type === 'deposit' ? tx.amount : 0), 0);
-                const bankWithdrawn = transactions.reduce((s, tx) => s + (tx.type === 'withdraw' ? tx.amount : 0), 0);
+                const bankDeposited = visTxs.reduce((s, tx) => s + (tx.type === 'deposit' ? tx.amount : 0), 0);
+                const bankWithdrawn = visTxs.reduce((s, tx) => s + (tx.type === 'withdraw' ? tx.amount : 0), 0);
                 const bankBalance = bankDeposited - bankWithdrawn;
                 // Net worth
                 const netWorth = stockValue + bankBalance;
@@ -1580,7 +1603,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                         <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Stocks Invested</p>
                         <p className="text-xl font-black text-white">{formatCurrency(stockBuys)}</p>
                       </div>
-                      <p className="text-[10px] font-bold text-white/30">{selectedTickers.length} asset{selectedTickers.length !== 1 ? 's' : ''}</p>
+                      <p className="text-[10px] font-bold text-white/30">{visibleStockTickers.length} asset{visibleStockTickers.length !== 1 ? 's' : ''}</p>
                     </div>
                     {stockSells > 0 && (
                     <>
@@ -1602,7 +1625,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   </div>
                   )}
                   {/* Bank */}
-                  {hasCashTx && (
+                  {hasCashTx && !hiddenAssets.has(CASH_TICKER) && (
                   <div className="p-4 rounded-2xl border bg-indigo-500/10 border-indigo-500/20 space-y-3">
                     <div>
                       <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Bank Deposits</p>
@@ -1655,7 +1678,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   const txs = txByTicker[ticker] || [];
                   if (!asset || txs.length === 0) return null;
                   return (
-                    <div key={ticker} className="space-y-1.5">
+                    <div key={ticker} className={`space-y-1.5 transition-opacity ${hiddenAssets.has(ticker) ? 'opacity-50' : ''}`}>
                       <div className="flex items-center gap-2 mb-1">
                         <div className="relative">
                           <button
@@ -1689,6 +1712,9 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                             <Minus className="w-3 h-3" />
                           </button>
                         )}
+                        <button onClick={() => toggleHideAsset(ticker)} className={`p-1 rounded-lg transition-colors ${hiddenAssets.has(ticker) ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30' : 'bg-slate-600/20 text-slate-500 hover:bg-slate-600/30'}`} title={hiddenAssets.has(ticker) ? 'Show in net worth' : 'Hide from net worth'}>
+                          {hiddenAssets.has(ticker) ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        </button>
                       </div>
                       {txs.map((tx) => (
                         <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'buy' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
@@ -1708,7 +1734,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 const cashTxs = txByTicker[CASH_TICKER] || [];
                 const cashBalance = cashTxs.reduce((s, tx) => s + (tx.type === 'deposit' ? tx.amount : -tx.amount), 0);
                 return (
-                  <div className="space-y-1.5">
+                  <div className={`space-y-1.5 transition-opacity ${hiddenAssets.has(CASH_TICKER) ? 'opacity-50' : ''}`}>
                     <div className="flex items-center gap-2 mb-1">
                       <Landmark className="w-3.5 h-3.5 text-indigo-400" />
                       <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex-1 truncate">Bank Account</p>
@@ -1720,6 +1746,9 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           <Minus className="w-3 h-3" />
                         </button>
                       )}
+                      <button onClick={() => toggleHideAsset(CASH_TICKER)} className={`p-1 rounded-lg transition-colors ${hiddenAssets.has(CASH_TICKER) ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30' : 'bg-slate-600/20 text-slate-500 hover:bg-slate-600/30'}`} title={hiddenAssets.has(CASH_TICKER) ? 'Show in net worth' : 'Hide from net worth'}>
+                        {hiddenAssets.has(CASH_TICKER) ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                      </button>
                     </div>
                     {cashTxs.map((tx) => (
                       <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'deposit' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}>
@@ -1923,7 +1952,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   </div>
                 ) : chartPage === 0 ? (() => {
                   // Net Worth — total portfolio value over time
-                  const nwTickers = [...new Set(transactions.map(tx => tx.ticker).filter(t => livePriceCache?.[t]))];
+                  const nwTickers = [...new Set(visibleTransactions.map(tx => tx.ticker).filter(t => livePriceCache?.[t]))];
                   return (
                     <ResponsiveContainer width="100%" height="100%">
                       <LineChart data={filteredChartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
@@ -1965,7 +1994,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 })()
                 : chartPage === 1 ? (() => {
                   // Performance — stock return over time (stocks only)
-                  const stockTxs = [...transactions].filter(tx => tx.type === 'buy' || tx.type === 'sell').sort((a, b) => a.date.localeCompare(b.date));
+                  const stockTxs = [...visibleTransactions].filter(tx => tx.type === 'buy' || tx.type === 'sell').sort((a, b) => a.date.localeCompare(b.date));
                   if (stockTxs.length === 0) return (
                     <div className="h-full flex items-center justify-center text-slate-400">
                       <p className="font-bold text-sm">No stock transactions yet</p>
@@ -1984,7 +2013,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   const perfData = filteredStockChartData.map((p) => {
                     const d = depositMap.get(p.date);
                     if (d) { lastDep = d.deposits; lastWith = d.withdrawals; }
-                    const pv = selectedTickers.reduce((s, t) => s + (p[t] ?? 0), 0);
+                    const pv = selectedTickers.filter(t => !hiddenAssets.has(t)).reduce((s, t) => s + (p[t] ?? 0), 0);
                     const pnl = pv + lastWith - lastDep;
                     const pct = lastDep > 0 ? (pnl / lastDep) * 100 : 0;
                     return { date: p.date, 'Return %': Math.round(pct * 100) / 100, 'Return $': Math.round(pnl) };
@@ -2161,7 +2190,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
 
                 : chartPage === 4 ? (() => {
                   // Deposits vs Value — area chart
-                  const sortedTx = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+                  const sortedTx = [...visibleTransactions].sort((a, b) => a.date.localeCompare(b.date));
                   const depositMap = new Map();
                   let cumDeposits = 0;
                   let cumWithdrawals = 0;
@@ -2245,9 +2274,9 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
 
                 : chartPage === 7 ? (() => {
                   // Bank Balance — step line chart
-                  if (!hasCashTx) return (
+                  if (!hasCashTx || hiddenAssets.has(CASH_TICKER)) return (
                     <div className="h-full flex items-center justify-center text-slate-400">
-                      <p className="font-bold text-sm">No bank transactions yet</p>
+                      <p className="font-bold text-sm">{hiddenAssets.has(CASH_TICKER) ? 'Bank account hidden from net worth' : 'No bank transactions yet'}</p>
                     </div>
                   );
                   const bankColor = selectedAssets[CASH_TICKER]?.color || '#6366f1';
@@ -2365,7 +2394,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                         <div key={idx} className="p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-white dark:bg-slate-800 border-slate-200 shadow-sm transition-all hover:translate-y-[-4px]">
                           <div className="flex justify-between items-start mb-4">
                             <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
-                              {stat.ticker}
+                            {displayTicker(stat.ticker)}
                             </div>
                             <div className={`flex items-center gap-1 text-xs font-black ${(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                               {(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
@@ -2416,7 +2445,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       <td className="px-4 sm:px-8 py-4 sm:py-6">
                         <div className="flex items-center gap-3 sm:gap-4">
                           <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: stat.color }} />
-                          <span className="font-black text-sm">{stat.name} ({stat.ticker})</span>
+                          <span className="font-black text-sm">{stat.name} ({displayTicker(stat.ticker)})</span>
                         </div>
                       </td>
                       <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm">{formatCurrency(stat.totalDeposits)}</td>
@@ -2847,11 +2876,11 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
             <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950 border border-blue-100 dark:border-blue-900">
               <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] ${editingTx.type === 'buy' ? 'bg-emerald-500' : 'bg-rose-500'}`}>
-                  {editingTx.ticker.slice(0, 3)}
+                  {displayTicker(editingTx.ticker).slice(0, 3)}
                 </div>
                 <div className="min-w-0">
                   <h4 className="text-base font-black truncate">{selectedAssets[editingTx.ticker]?.name}</h4>
-                  <p className={`text-[10px] font-bold uppercase ${editingTx.type === 'buy' ? 'text-emerald-600' : 'text-rose-600'}`}>{editingTx.type} · {editingTx.ticker}</p>
+                  <p className={`text-[10px] font-bold uppercase ${editingTx.type === 'buy' ? 'text-emerald-600' : 'text-rose-600'}`}>{editingTx.type} · {displayTicker(editingTx.ticker)}</p>
                 </div>
               </div>
             </div>
@@ -2943,9 +2972,14 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">{importParsed.length} transaction{importParsed.length !== 1 ? 's' : ''} found</p>
                 <div className="max-h-40 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
                   {importParsed.map((row, i) => (
-                    <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold ${row.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-700' : 'bg-rose-50 dark:bg-rose-950 text-rose-700'}`}>
+                    <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold ${
+                      row.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-700'
+                      : row.type === 'deposit' ? 'bg-indigo-50 dark:bg-indigo-950 text-indigo-700'
+                      : row.type === 'withdraw' ? 'bg-amber-50 dark:bg-amber-950 text-amber-700'
+                      : 'bg-rose-50 dark:bg-rose-950 text-rose-700'
+                    }`}>
                       <span className="uppercase text-[10px] font-black w-8">{row.type}</span>
-                      <span className="flex-1 truncate">{row.name} ({row.ticker})</span>
+                      <span className="flex-1 truncate">{row.name} ({displayTicker(row.ticker)})</span>
                       <span>{formatCurrency(row.amount)}</span>
                       <span className="text-slate-400 text-[10px]">{row.date}</span>
                     </div>
