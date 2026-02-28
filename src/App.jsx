@@ -14,6 +14,7 @@ import {
   ShoppingCart, HandCoins, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
   LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText, Menu, Coffee,
   ChevronLeft, ChevronRight, Share2, Camera, Check, Link, ExternalLink, Maximize2, Minimize2,
+  Landmark,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices } from './api';
@@ -49,13 +50,34 @@ fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
 const DEFAULT_AMOUNT = 1000;
 const TODAY = new Date().toISOString().split('T')[0];
 
+const CASH_TICKER = '_CASH';
+const isCashTx = (tx) => tx.ticker === CASH_TICKER;
+
 const MONTHS_MAP = { jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06', jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12' };
 
 const parseNaturalTx = (text) => {
   const lower = text.toLowerCase().trim();
   if (!lower) return null;
 
-  // Action
+  // Action — check for bank keywords first
+  const isDeposit = /\b(deposit(ed)?|bank\s*deposit)\b/.test(lower);
+  const isWithdraw = /\b(withdraw(n|al)?|bank\s*withdraw(al)?)\b/.test(lower);
+  if (isDeposit || isWithdraw) {
+    // Bank transaction — only need amount and date
+    let date = null;
+    let cleaned = lower;
+    let m = cleaned.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m) { date = `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`; cleaned = cleaned.replace(m[0], ' '); }
+    if (!date) { m = cleaned.match(/(\d{4})-(\d{1,2})-(\d{1,2})/); if (m) { date = `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`; cleaned = cleaned.replace(m[0], ' '); } }
+    if (!date) { m = cleaned.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+(\d{1,2}),?\s*(\d{4})/); if (m) { date = `${m[3]}-${MONTHS_MAP[m[1].slice(0, 3)]}-${m[2].padStart(2, '0')}`; cleaned = cleaned.replace(m[0], ' '); } }
+    if (!date) { m = cleaned.match(/(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*,?\s*(\d{4})/); if (m) { date = `${m[3]}-${MONTHS_MAP[m[2].slice(0, 3)]}-${m[1].padStart(2, '0')}`; cleaned = cleaned.replace(m[0], ' '); } }
+    let amount = null;
+    m = cleaned.match(/\$\s?([\d,]+(?:\.\d+)?)\s*([km])?/i);
+    if (m) { amount = parseFloat(m[1].replace(/,/g, '')); if (m[2]?.toLowerCase() === 'k') amount *= 1000; if (m[2]?.toLowerCase() === 'm') amount *= 1000000; }
+    if (!amount) { m = cleaned.match(/\b(\d[\d,]*(?:\.\d+)?)\s*([km])\b/i); if (m) { amount = parseFloat(m[1].replace(/,/g, '')); if (m[2].toLowerCase() === 'k') amount *= 1000; if (m[2].toLowerCase() === 'm') amount *= 1000000; } }
+    if (!amount) { m = cleaned.match(/\b(\d[\d,]*(?:\.\d+)?)\b/); if (m && parseFloat(m[1].replace(/,/g, '')) >= 1) amount = parseFloat(m[1].replace(/,/g, '')); }
+    return { type: isDeposit ? 'deposit' : 'withdraw', amount, date, asset: '_BANK', sellAll: false, sellFraction: null };
+  }
   const type = /\b(sell|sold)\b/.test(lower) ? 'sell' : 'buy';
 
   // Date — extract and remove from text
@@ -385,8 +407,13 @@ const App = () => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [hiddenSeries, setHiddenSeries] = useState(new Set());
   const [showMarkers, setShowMarkers] = useState(true);
-  const [chartPage, setChartPage] = useState(0); // 0 = performance, 1 = line, 2 = pie, 3 = deposits vs value, 4 = returns by asset, 5 = asset price
-  const CHART_PAGES = 6;
+  const [chartPage, setChartPage] = useState(0); // 0 = net worth, 1 = performance, 2 = line, 3 = pie, 4 = deposits vs value, 5 = returns by asset, 6 = asset price
+  const CHART_PAGES = 8;
+  const CHART_CATEGORIES = { all: [0, 3, 4], stocks: [1, 2, 5, 6], bank: [7] };
+  const [chartCategory, setChartCategory] = useState('all');
+  const categoryPages = CHART_CATEGORIES[chartCategory];
+  const CHART_RANGES = ['24H', '1W', '1M', '6M', '12M', 'YTD', '5Y', 'ALL'];
+  const [chartRange, setChartRange] = useState('ALL');
   const [priceAssetIdx, setPriceAssetIdx] = useState(0);
   const [liveQuotes, setLiveQuotes] = useState({});  // { ticker: { price, date } }
   const [pieMode, setPieMode] = useState(0); // 0 = allocation, 1 = return
@@ -396,7 +423,7 @@ const App = () => {
   });
 
   // --- Modal ---
-  const [modalMode, setModalMode] = useState(null);           // 'buy' | 'sell' | 'edit' | 'import' | 'insights' | null
+  const [modalMode, setModalMode] = useState(null);           // 'buy' | 'sell' | 'deposit' | 'withdraw' | 'edit' | 'import' | 'insights' | null
   const [stagedAsset, setStagedAsset] = useState(null);       // { symbol, name } — buy step 2
   const [sellTicker, setSellTicker] = useState(null);         // ticker — sell step 2
   const [modalAmount, setModalAmount] = useState(DEFAULT_AMOUNT);
@@ -433,17 +460,22 @@ const App = () => {
   // ─── Derived ───────────────────────────────────────────────────────────────
 
   const selectedTickers = useMemo(
-    () => [...new Set(transactions.map((tx) => tx.ticker))],
+    () => [...new Set(transactions.filter((tx) => tx.ticker !== CASH_TICKER).map((tx) => tx.ticker))],
+    [transactions],
+  );
+
+  const hasCashTx = useMemo(
+    () => transactions.some((tx) => tx.ticker === CASH_TICKER),
     [transactions],
   );
 
   const totalDeposits = useMemo(
-    () => transactions.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0),
+    () => transactions.reduce((s, tx) => s + (tx.type === 'buy' || tx.type === 'deposit' ? tx.amount : 0), 0),
     [transactions],
   );
   
   const totalWithdrawals = useMemo(
-    () => transactions.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0),
+    () => transactions.reduce((s, tx) => s + (tx.type === 'sell' || tx.type === 'withdraw' ? tx.amount : 0), 0),
     [transactions],
   );
 
@@ -466,7 +498,7 @@ const App = () => {
       if (lastPoint && lastPoint[t] != null) return lastPoint[t] > 0;
       // Fallback to net invested if no chart data yet
       const net = (txByTicker[t] || []).reduce(
-        (s, tx) => s + (tx.type === 'buy' ? tx.amount : -tx.amount), 0,
+        (s, tx) => s + (tx.type === 'buy' || tx.type === 'deposit' ? tx.amount : -tx.amount), 0,
       );
       return net > 0;
     });
@@ -511,6 +543,18 @@ const App = () => {
     setModalPrice(null);
     setSellTicker(preselectedTicker);
     setModalMode('sell');
+  }, []);
+
+  const openDepositModal = useCallback(() => {
+    setModalAmount(DEFAULT_AMOUNT);
+    setModalDate(TODAY);
+    setModalMode('deposit');
+  }, []);
+
+  const openWithdrawModal = useCallback(() => {
+    setModalAmount(DEFAULT_AMOUNT);
+    setModalDate(TODAY);
+    setModalMode('withdraw');
   }, []);
 
   const openBuyForTicker = useCallback((ticker) => {
@@ -593,7 +637,18 @@ const App = () => {
     setTransactions((prev) => [...prev, tx]);
   }, [modalAmount, modalDate, modalPrice]);
 
-  // ─── Quick Add (AI) ──────────────────────────────────────────────────────
+  const addCashTx = useCallback((type) => {
+    if (!selectedAssets[CASH_TICKER]) {
+      setSelectedAssets((prev) => ({ ...prev, [CASH_TICKER]: { name: 'Bank Account', color: '#6366f1' } }));
+    }
+    const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0)
+      ? modalAmount
+      : DEFAULT_AMOUNT;
+    const tx = { id: nextTxId++, ticker: CASH_TICKER, type, amount: validAmount, date: modalDate };
+    setTransactions((prev) => [...prev, tx]);
+  }, [modalAmount, modalDate, selectedAssets]);
+
+  // ─── Quick Add (AI)
 
   const handleQuickAdd = useCallback(async () => {
     console.log('handleQuickAdd called, supabase:', supabase, 'user:', user);
@@ -607,6 +662,24 @@ const App = () => {
       }
       setQuickAddStatus('processing');
       try {
+        // Handle bank transactions directly
+        if (parsed.asset === '_BANK') {
+          const resolved = { ticker: CASH_TICKER, name: 'Bank Account', type: parsed.type, amount: parsed.amount || DEFAULT_AMOUNT, date: parsed.date || TODAY };
+          if (quickAddVerify) {
+            setQuickAddPreview(resolved);
+            setQuickAddStatus(null);
+          } else {
+            if (!selectedAssets[CASH_TICKER]) {
+              const color = COLORS[colorIdx.current % COLORS.length];
+              colorIdx.current++;
+              setSelectedAssets((prev) => ({ ...prev, [CASH_TICKER]: { name: 'Bank Account', color } }));
+            }
+            setTransactions((prev) => [...prev, { id: nextTxId++, ...resolved }]);
+            setQuickAddText('');
+            setQuickAddStatus(null);
+          }
+          return;
+        }
         const query = parsed.asset.toLowerCase();
         let ticker = null;
         let matchName = null;
@@ -817,8 +890,15 @@ const App = () => {
       const action = (cols[hasHeader ? actionIdx : 2] || '').toLowerCase();
       const amount = parseFloat(cols[hasHeader ? amountIdx : 3]);
       const price = hasHeader && priceIdx >= 0 ? parseFloat(cols[priceIdx]) : NaN;
-      if (date && ticker && (action === 'buy' || action === 'sell') && amount > 0) {
-        const row = { date, ticker, name: name || ticker, type: action, amount };
+      const isCashAction = action === 'deposit' || action === 'withdraw';
+      if (date && (isCashAction || (ticker && (action === 'buy' || action === 'sell'))) && amount > 0) {
+        const row = {
+          date,
+          ticker: isCashAction ? CASH_TICKER : ticker,
+          name: isCashAction ? 'Bank Account' : (name || ticker),
+          type: action,
+          amount,
+        };
         if (!isNaN(price) && price > 0) row.price = price;
         rows.push(row);
       }
@@ -834,8 +914,9 @@ const App = () => {
     const newTxs = [];
     importParsed.forEach((row) => {
       if (!newAssets[row.ticker]) {
-        newAssets[row.ticker] = { name: row.name, color: COLORS[colorIdx.current % COLORS.length] };
-        colorIdx.current++;
+        const color = row.ticker === CASH_TICKER ? '#6366f1' : COLORS[colorIdx.current % COLORS.length];
+        newAssets[row.ticker] = { name: row.name, color };
+        if (row.ticker !== CASH_TICKER) colorIdx.current++;
       }
       const importedTx = { id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date };
       if (row.price) importedTx.price = row.price;
@@ -850,8 +931,10 @@ const App = () => {
   const exportCSV = useCallback(() => {
     const headers = 'Date,Asset,Name,Action,Amount,Price';
     const rows = transactions.map((tx) => {
-      const name = (selectedAssets[tx.ticker]?.name || tx.ticker).replace(/,/g, ' ');
-      return `${tx.date},${tx.ticker},${name},${tx.type},${tx.amount},${tx.price || ''}`;
+      const isCash = tx.ticker === CASH_TICKER;
+      const name = isCash ? 'Bank Account' : (selectedAssets[tx.ticker]?.name || tx.ticker).replace(/,/g, ' ');
+      const ticker = isCash ? 'CASH' : tx.ticker;
+      return `${tx.date},${ticker},${name},${tx.type},${tx.amount},${tx.price || ''}`;
     });
     const csv = [headers, ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -1102,7 +1185,9 @@ const App = () => {
     if (transactions.length === 0) return;
 
     // Global start = oldest transaction date across ALL tickers
-    const tickers = [...new Set(transactions.map((tx) => tx.ticker))];
+    const allTickers = [...new Set(transactions.map((tx) => tx.ticker))];
+    const tickers = allTickers.filter((t) => t !== CASH_TICKER);
+    const hasCash = allTickers.includes(CASH_TICKER);
     const globalStart = transactions.reduce(
       (min, tx) => (tx.date < min ? tx.date : min), transactions[0].date,
     );
@@ -1119,21 +1204,33 @@ const App = () => {
     // Only refetch if a ticker is new or the global start moved earlier
     const fetched = fetchedRangesRef.current;
     const needsFetch = tickers.some((t) => !fetched[t] || fetched[t] > globalStart);
-    if (!needsFetch) return;
+    // Also need to update if cash was added but no market tickers exist
+    if (!needsFetch && !(hasCash && tickers.length === 0 && !fetched[CASH_TICKER])) return;
 
     let cancelled = false;
     const debounce = setTimeout(async () => {
       setIsSimulating(true);
       setFetchError(null);
       try {
-        const prices = await fetchPrices(dateRanges);
+        const prices = tickers.length > 0 ? await fetchPrices(dateRanges) : {};
         if (!cancelled) {
           tickers.forEach((t) => {
             if (prices[t]?.length > 0) fetched[t] = globalStart;
           });
+          // Generate synthetic _CASH price data at $1 for every day so the time axis stays linear
+          if (hasCash) {
+            const cashEntries = [];
+            const startD = new Date(fetchStart);
+            const endD = new Date(TODAY);
+            for (let d = new Date(startD); d <= endD; d.setDate(d.getDate() + 1)) {
+              cashEntries.push({ date: d.toISOString().split('T')[0], price: 1 });
+            }
+            prices[CASH_TICKER] = cashEntries;
+            fetched[CASH_TICKER] = globalStart;
+          }
           setPriceCache((prev) => {
             const next = {};
-            tickers.forEach((t) => {
+            allTickers.forEach((t) => {
               next[t] = (prices[t]?.length > 0) ? prices[t] : (prev?.[t] || []);
             });
             return next;
@@ -1199,11 +1296,48 @@ const App = () => {
 
   const chartTickers = selectedTickers.filter((t) => livePriceCache?.[t]);
 
-  // ─── Live quotes for all tickers ───────────────────────────────────────────
+  const chartRangeCutoff = useMemo(() => {
+    if (chartRange === 'ALL') return null;
+    const now = new Date();
+    switch (chartRange) {
+      case '24H': now.setDate(now.getDate() - 1); break;
+      case '1W': now.setDate(now.getDate() - 7); break;
+      case '1M': now.setMonth(now.getMonth() - 1); break;
+      case '6M': now.setMonth(now.getMonth() - 6); break;
+      case '12M': now.setFullYear(now.getFullYear() - 1); break;
+      case 'YTD': return `${now.getFullYear()}-01-01`;
+      case '5Y': now.setFullYear(now.getFullYear() - 5); break;
+      default: return null;
+    }
+    return now.toISOString().split('T')[0];
+  }, [chartRange]);
+
+  const filteredChartData = useMemo(() => {
+    if (!chartRangeCutoff || chartData.length === 0) return chartData;
+    return chartData.filter(p => p.date >= chartRangeCutoff);
+  }, [chartData, chartRangeCutoff]);
+
+  const oldestStockTxDate = useMemo(() => {
+    const stockTxs = transactions.filter(tx => tx.ticker !== CASH_TICKER);
+    if (stockTxs.length === 0) return null;
+    return stockTxs.reduce((min, tx) => tx.date < min ? tx.date : min, stockTxs[0].date);
+  }, [transactions]);
+
+  const filteredStockChartData = useMemo(() => {
+    if (!oldestStockTxDate) return filteredChartData;
+    // Pad 30 days before first stock tx, same as the global fetch padding
+    const padded = new Date(oldestStockTxDate);
+    padded.setDate(padded.getDate() - 30);
+    const stockStart = padded.toISOString().split('T')[0];
+    const cutoff = chartRangeCutoff && chartRangeCutoff > stockStart ? chartRangeCutoff : stockStart;
+    return chartData.filter(p => p.date >= cutoff);
+  }, [chartData, chartRangeCutoff, oldestStockTxDate, filteredChartData]);
+
+  // ─── Live quotes for all tickers
 
   useEffect(() => {
     if (!priceCache) return;
-    const tickers = Object.keys(priceCache).filter((t) => priceCache[t]?.length > 0);
+    const tickers = Object.keys(priceCache).filter((t) => t !== CASH_TICKER && priceCache[t]?.length > 0);
     if (tickers.length === 0) return;
     // Only fetch tickers we don't already have a quote for today
     const needed = tickers.filter((t) => liveQuotes[t]?.date !== TODAY);
@@ -1270,7 +1404,14 @@ const App = () => {
       <div className="max-w-7xl mx-auto space-y-8">
 
         {/* Menu */}
-        <div className="flex justify-end">
+        <div className="flex items-center">
+          <button
+            onClick={() => setAddTxOpen(true)}
+            className="px-4 py-2 rounded-2xl font-bold transition-all flex items-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white text-sm"
+          >
+            New Transaction
+          </button>
+          <div className="ml-auto">
           <div className="relative flex">
             <button
               onClick={() => setAboutOpen((v) => !v)}
@@ -1360,6 +1501,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
               </>
             )}
           </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -1369,7 +1511,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
           <aside className="lg:col-span-4 space-y-6">
 
             {/* Transaction ledger */}
-            {selectedTickers.length > 0 && (
+            {(selectedTickers.length > 0 || hasCashTx) && (
             <div className="bg-slate-900 text-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] shadow-2xl space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
@@ -1385,6 +1527,89 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   </button>
                 )}
               </div>
+
+              {(() => {
+                const lastPoint = chartData[chartData.length - 1];
+                // Stock calculations
+                const stockBuys = transactions.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
+                const stockSells = transactions.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0);
+                const stockValue = selectedTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
+                const stockReturn = stockValue + stockSells - stockBuys;
+                const stockReturnPct = stockBuys > 0 ? (stockReturn / stockBuys) * 100 : 0;
+                const stockPositive = stockReturn >= 0;
+                // Bank calculations
+                const bankDeposited = transactions.reduce((s, tx) => s + (tx.type === 'deposit' ? tx.amount : 0), 0);
+                const bankWithdrawn = transactions.reduce((s, tx) => s + (tx.type === 'withdraw' ? tx.amount : 0), 0);
+                const bankBalance = bankDeposited - bankWithdrawn;
+                // Net worth
+                const netWorth = stockValue + bankBalance;
+                return (
+                <div className="space-y-3">
+                  {/* Stocks */}
+                  {stockBuys > 0 && (
+                  <div className="p-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/20 space-y-3">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Stocks Invested</p>
+                        <p className="text-xl font-black text-white">{formatCurrency(stockBuys)}</p>
+                      </div>
+                      <p className="text-[10px] font-bold text-white/30">{selectedTickers.length} asset{selectedTickers.length !== 1 ? 's' : ''}</p>
+                    </div>
+                    {stockSells > 0 && (
+                    <>
+                      <div className="border-t border-white/10" />
+                      <div>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Stocks Sold</p>
+                        <p className="text-xl font-black text-emerald-400">{formatCurrency(stockSells)}</p>
+                      </div>
+                    </>
+                    )}
+                    <div className="border-t border-white/10" />
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Return</p>
+                        <p className={`text-xl font-black ${stockPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(stockReturn)}</p>
+                      </div>
+                      <span className={`text-xs font-black px-2 py-1 rounded-lg ${stockPositive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>{stockPositive ? '+' : ''}{stockReturnPct.toFixed(1)}%</span>
+                    </div>
+                  </div>
+                  )}
+                  {/* Bank */}
+                  {hasCashTx && (
+                  <div className="p-4 rounded-2xl border bg-indigo-500/10 border-indigo-500/20 space-y-3">
+                    <div>
+                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Bank Deposits</p>
+                      <p className="text-xl font-black text-indigo-400">{formatCurrency(bankDeposited)}</p>
+                    </div>
+                    {bankWithdrawn > 0 && (
+                    <>
+                      <div className="border-t border-white/10" />
+                      <div>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Withdrawals</p>
+                        <p className="text-xl font-black text-amber-400">{formatCurrency(bankWithdrawn)}</p>
+                      </div>
+                      <div className="border-t border-white/10" />
+                      <div>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Bank Balance</p>
+                        <p className="text-xl font-black text-indigo-400">{formatCurrency(bankBalance)}</p>
+                      </div>
+                    </>
+                    )}
+                  </div>
+                  )}
+                  {/* Net Worth */}
+                  <div className="p-4 rounded-2xl border bg-white/5 border-white/10">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Net Worth</p>
+                        <p className="text-2xl font-black text-white">{formatCurrency(netWorth)}</p>
+                      </div>
+                      <p className="text-[10px] font-bold text-white/30">{transactions.length} tx</p>
+                    </div>
+                  </div>
+                </div>
+                );
+              })()}
 
               <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
                 {selectedTickers.map((ticker) => {
@@ -1442,64 +1667,40 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 })}
               </div>
 
-              {(() => {
-                const lastPoint = chartData[chartData.length - 1];
-                const currentBalance = lastPoint?.['Total Portfolio'] ?? selectedTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
-                const pnl = currentBalance + totalWithdrawals - totalDeposits;
-                const pnlPct = totalDeposits > 0 ? (pnl / totalDeposits) * 100 : 0;
-                const isPositive = pnl >= 0;
+              {/* Bank Account transactions */}
+              {hasCashTx && (() => {
+                const cashTxs = txByTicker[CASH_TICKER] || [];
+                const cashBalance = cashTxs.reduce((s, tx) => s + (tx.type === 'deposit' ? tx.amount : -tx.amount), 0);
                 return (
-                <div className="p-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/20 space-y-3">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Net Invested</p>
-                      <p className="text-xl font-black text-white">{formatCurrency(totalDeposits)}</p>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Landmark className="w-3.5 h-3.5 text-indigo-400" />
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex-1 truncate">Bank Account</p>
+                      <button onClick={openDepositModal} className="p-1 rounded-lg bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 transition-colors" title="Deposit">
+                        <Plus className="w-3 h-3" />
+                      </button>
+                      {cashBalance > 0 && (
+                        <button onClick={openWithdrawModal} className="p-1 rounded-lg bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 transition-colors" title="Withdraw">
+                          <Minus className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
-                    <p className="text-[10px] font-bold text-white/30">{transactions.length} tx · {selectedTickers.length} asset{selectedTickers.length !== 1 ? 's' : ''}</p>
-                  </div>
-                  {totalWithdrawals > 0 && (
-                  <>
-                    <div className="border-t border-white/10" />
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Total Withdrawals</p>
-                        <p className="text-xl font-black text-emerald-400">{formatCurrency(totalWithdrawals)}</p>
+                    {cashTxs.map((tx) => (
+                      <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'deposit' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}>
+                        <span className="uppercase text-[10px] font-black w-14">{tx.type === 'deposit' ? 'deposit' : 'withdraw'}</span>
+                        <span className="flex-1 text-white/80">{formatCurrency(tx.amount)}</span>
+                        <span className="text-white/40 text-[10px]">{formatShortDate(tx.date)}</span>
+                        <button onClick={(e) => { e.stopPropagation(); removeTx(tx.id); }} className="text-white/20 hover:text-rose-400 p-0.5 transition-colors">
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                       </div>
-                    </div>
-                  </>
-                  )}
-                  {currentBalance > 0 && (
-                  <>
-                    <div className="border-t border-white/10" />
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Net Worth</p>
-                        <p className={`text-xl font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(currentBalance)}</p>
-                      </div>
-                    </div>
-                  </>
-                  )}
-                  <div className="border-t border-white/10" />
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Total Return</p>
-                      <p className={`text-xl font-black ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(pnl)}</p>
-                    </div>
-                    <span className={`text-xs font-black px-2 py-1 rounded-lg ${isPositive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>{isPositive ? '+' : ''}{pnlPct.toFixed(1)}%</span>
+                    ))}
                   </div>
-                </div>
                 );
               })()}
             </div>
             )}
 
-            {/* Add Transaction */}
-            <button
-              onClick={() => setAddTxOpen(true)}
-              className="w-full py-3 rounded-2xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              New Transaction
-            </button>
           </aside>
           )}
 
@@ -1511,18 +1712,18 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
               <div className="flex flex-wrap justify-between items-start mb-4 sm:mb-8 gap-y-3 relative z-10">
                 <div>
                   <h2 className="text-base sm:text-2xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase">
-                    {['Performance', 'Transaction History', 'Allocation', 'Deposits vs Value', 'Returns by Asset', 'Asset Price'][chartPage]}
+                    {['Net Worth', 'Performance', 'Transaction History', 'Allocation', 'Deposits vs Value', 'Returns by Asset', 'Asset Price', 'Bank Balance'][chartPage]}
                   </h2>
                   <p className="text-sm text-slate-400 italic font-medium">
-                    {chartPage === 2
+                    {chartPage === 3
                       ? (pieMode === 0 ? 'Current portfolio breakdown' : 'Return contribution per asset')
-                      : chartPage === 5
+                      : chartPage === 6
                         ? (chartTickers.length > 0 ? `${selectedAssets[chartTickers[priceAssetIdx % chartTickers.length]]?.name || chartTickers[priceAssetIdx % chartTickers.length]} — ${liveQuotes[chartTickers[priceAssetIdx % chartTickers.length]] ? 'live price' : 'historical closing price'}` : 'No assets')
-                        : ['Return over time', 'Historical data from Yahoo Finance', '', 'Invested capital vs portfolio value', 'Profit & loss per asset'][chartPage]}
+                        : ['Total portfolio value over time', 'Stock returns over time', 'Historical data from Yahoo Finance', '', 'Invested capital vs portfolio value', 'Profit & loss per asset', '', 'Bank account balance over time'][chartPage]}
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2" data-share-hide>
-                  {chartPage === 0 && chartData.length > 0 && (
+                  {chartPage === 1 && chartData.length > 0 && chartTickers.length > 0 && (
                     <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
                       {['%', '$'].map((label, i) => (
                         <button
@@ -1539,7 +1740,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       ))}
                     </div>
                   )}
-                  {chartPage === 1 && chartData.length > 0 && transactions.length > 0 && (
+                  {chartPage === 2 && chartData.length > 0 && chartTickers.length > 0 && (
                     <button
                       onClick={() => setShowMarkers((v) => !v)}
                       className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all whitespace-nowrap ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
@@ -1547,7 +1748,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       {showMarkers ? '● Markers On' : '○ Markers Off'}
                     </button>
                   )}
-                  {chartPage === 2 && chartData.length > 0 && (
+                  {chartPage === 3 && chartData.length > 0 && (
                     <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
                       {['Allocation', 'Return'].map((label, i) => (
                         <button
@@ -1564,7 +1765,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       ))}
                     </div>
                   )}
-                  {chartPage === 5 && chartData.length > 0 && transactions.length > 0 && (
+                  {chartPage === 6 && chartData.length > 0 && chartTickers.length > 0 && (
                     <button
                       onClick={() => setShowMarkers((v) => !v)}
                       className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all whitespace-nowrap ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
@@ -1598,26 +1799,57 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   >
                     {document.fullscreenElement ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                   </button>
-                  {chartData.length > 0 && chartTickers.length > 0 && (
-                    <div className="flex items-center gap-1">
-                      <button
-                      onClick={() => setChartPage((p) => (p - 1 + CHART_PAGES) % CHART_PAGES)}
-                        className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                      </button>
-                      <span className="text-[10px] font-bold text-slate-400 w-8 text-center">{chartPage + 1}/{CHART_PAGES}</span>
-                      <button
-                        onClick={() => setChartPage((p) => (p + 1) % CHART_PAGES)}
-                        className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
-                      >
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
+                  {chartData.length > 0 && (
+                    <div className="flex items-center gap-2">
+                      <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
+                        {Object.keys(CHART_CATEGORIES).map((cat) => (
+                          <button
+                            key={cat}
+                            onClick={() => { setChartCategory(cat); setChartPage(CHART_CATEGORIES[cat][0]); }}
+                            className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${
+                              chartCategory === cat
+                                ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
+                                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                            }`}
+                          >
+                            {cat}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => { const i = categoryPages.indexOf(chartPage); setChartPage(categoryPages[(i - 1 + categoryPages.length) % categoryPages.length]); }}
+                          className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <span className="text-[10px] font-bold text-slate-400 w-8 text-center">{categoryPages.indexOf(chartPage) + 1}/{categoryPages.length}</span>
+                        <button
+                          onClick={() => { const i = categoryPages.indexOf(chartPage); setChartPage(categoryPages[(i + 1) % categoryPages.length]); }}
+                          className="p-1.5 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-400 transition-all"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
               </div>
-              {chartPage === 5 && chartTickers.length > 1 && (
+              {[0, 1, 2, 4, 6, 7].includes(chartPage) && chartData.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-2 -mt-2 sm:-mt-4" data-share-hide>
+                  {CHART_RANGES.map(r => (
+                    <button key={r} onClick={() => setChartRange(r)}
+                      className={`text-[10px] font-bold px-2 py-1 rounded-lg transition-all ${
+                        chartRange === r
+                          ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900'
+                          : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                      }`}>
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {chartPage === 6 && chartTickers.length > 1 && (
               <div className="absolute right-4 sm:right-6 md:right-8 top-[3.5rem] sm:top-[4.25rem] flex items-center gap-1 z-10" data-share-hide>
                   <button
                     onClick={() => setPriceAssetIdx((i) => (i - 1 + chartTickers.length) % chartTickers.length)}
@@ -1653,22 +1885,69 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     </div>
                   </div>
                 ) : chartPage === 0 ? (() => {
-                  // Performance — return over time
-                  const sortedTx = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+                  // Net Worth — total portfolio value over time
+                  const nwTickers = [...new Set(transactions.map(tx => tx.ticker).filter(t => livePriceCache?.[t]))];
+                  return (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={filteredChartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} minTickGap={60}
+                          tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })} />
+                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
+                          tickFormatter={(v) => formatShort(v)} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
+                          itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                          formatter={(v, n) => [formatCurrency(v), n]}
+                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+                        <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', color: dark ? '#94a3b8' : undefined }} onClick={handleLegendClick} />
+                        {nwTickers.length > 1 && (
+                          <Line type="monotone" dataKey="Total Portfolio" stroke={dark ? '#e2e8f0' : '#0f172a'} strokeWidth={3} dot={false} hide={hiddenSeries.has('Total Portfolio')} />
+                        )}
+                        {nwTickers.map((ticker) => {
+                          const isCash = ticker === CASH_TICKER;
+                          const asset = selectedAssets[ticker];
+                          if (!asset) return null;
+                          return (
+                            <Line
+                              key={ticker}
+                              type={isCash ? 'stepAfter' : 'monotone'}
+                              dataKey={ticker}
+                              name={isCash ? 'Bank Account' : `${asset.name} (${ticker})`}
+                              stroke={asset.color}
+                              strokeWidth={nwTickers.length > 1 ? 2 : 3}
+                              strokeDasharray={nwTickers.length > 1 ? '4 4' : undefined}
+                              dot={false}
+                              hide={hiddenSeries.has(ticker)}
+                            />
+                          );
+                        })}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  );
+                })()
+                : chartPage === 1 ? (() => {
+                  // Performance — stock return over time (stocks only)
+                  const stockTxs = [...transactions].filter(tx => tx.type === 'buy' || tx.type === 'sell').sort((a, b) => a.date.localeCompare(b.date));
+                  if (stockTxs.length === 0) return (
+                    <div className="h-full flex items-center justify-center text-slate-400">
+                      <p className="font-bold text-sm">No stock transactions yet</p>
+                    </div>
+                  );
                   const depositMap = new Map();
                   let cumDeposits = 0;
                   let cumWithdrawals = 0;
-                  sortedTx.forEach((tx) => {
+                  stockTxs.forEach((tx) => {
                     if (tx.type === 'buy') cumDeposits += tx.amount;
                     else cumWithdrawals += tx.amount;
                     depositMap.set(tx.date, { deposits: cumDeposits, withdrawals: cumWithdrawals });
                   });
                   let lastDep = 0;
                   let lastWith = 0;
-                  const perfData = chartData.map((p) => {
+                  const perfData = filteredStockChartData.map((p) => {
                     const d = depositMap.get(p.date);
                     if (d) { lastDep = d.deposits; lastWith = d.withdrawals; }
-                    const pv = p['Total Portfolio'] ?? 0;
+                    const pv = selectedTickers.reduce((s, t) => s + (p[t] ?? 0), 0);
                     const pnl = pv + lastWith - lastDep;
                     const pct = lastDep > 0 ? (pnl / lastDep) * 100 : 0;
                     return { date: p.date, 'Return %': Math.round(pct * 100) / 100, 'Return $': Math.round(pnl) };
@@ -1694,83 +1973,69 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     </ResponsiveContainer>
                   );
                 })()
-                : chartPage === 1 ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
-                      <XAxis
-                        dataKey="date"
-                        tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
-                        axisLine={false} tickLine={false} minTickGap={60}
-                        tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })}
-                      />
-                      <YAxis
-                        tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }}
-                        axisLine={false} tickLine={false}
-tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                      />
-                      <Tooltip
-                        contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
-                        itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
-                        formatter={(v, n) => [formatCurrency(v), n]}
-                        labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })}
-                      />
-                      <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', color: dark ? '#94a3b8' : undefined }} onClick={handleLegendClick} />
-                      {chartTickers.length > 1 && (
-<Line type="monotone" dataKey="Total Portfolio" stroke={dark ? '#e2e8f0' : '#0f172a'} strokeWidth={3} dot={false} hide={hiddenSeries.has('Total Portfolio')} />
-                      )}
-                      {chartTickers.map((ticker) => {
-                        const asset = selectedAssets[ticker];
-                        if (!asset) return null;
-                        return (
-                          <Line
-                            key={ticker}
-                            type="monotone"
-                            dataKey={ticker}
-                            name={`${asset.name} (${ticker})`}
-                            stroke={asset.color}
-                            strokeWidth={chartTickers.length > 1 ? 2 : 3}
-                            strokeDasharray={chartTickers.length > 1 ? '4 4' : undefined}
-                            dot={false}
-                            hide={hiddenSeries.has(ticker)}
-                          />
-                        );
-                      })}
-                      {showMarkers && assetMarkers.map((m) => (
-                        !hiddenSeries.has(m.ticker) && (
-                          <ReferenceDot
-                            key={`a-${m.id}`}
-                            x={m.chartDate}
-                            y={m.value}
-                            r={5}
-                            fill={m.type === 'buy' ? '#10b981' : '#ef4444'}
-                            stroke="#fff"
-                            strokeWidth={2}
-                            isFront
-                          />
-                        )
-                      ))}
-                      {showMarkers && chartTickers.length > 1 && !hiddenSeries.has('Total Portfolio') && portfolioMarkers.map((m) => (
-                        <ReferenceDot
-                          key={`p-${m.id}`}
-                          x={m.chartDate}
-                          y={m.value}
-                          r={4}
-                          fill={m.type === 'buy' ? '#10b981' : '#ef4444'}
-                          stroke={dark ? '#e2e8f0' : '#0f172a'}
-                          strokeWidth={2}
-                          isFront
-                        />
-                      ))}
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : chartPage === 2 ? (() => {
+                : chartPage === 2 ? (() => {
+                  // Transaction History — stocks only
+                  if (chartTickers.length === 0) return (
+                    <div className="h-full flex items-center justify-center text-slate-400">
+                      <p className="font-bold text-sm">No stock transactions yet</p>
+                    </div>
+                  );
+                  return (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={filteredStockChartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} minTickGap={60}
+                          tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })} />
+                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
+                          tickFormatter={(v) => formatShort(v)} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
+                          itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                          formatter={(v, n) => [formatCurrency(v), n]}
+                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+                        <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', color: dark ? '#94a3b8' : undefined }} onClick={handleLegendClick} />
+                        {chartTickers.map((ticker) => {
+                          const asset = selectedAssets[ticker];
+                          if (!asset) return null;
+                          return (
+                            <Line
+                              key={ticker}
+                              type="monotone"
+                              dataKey={ticker}
+                              name={`${asset.name} (${ticker})`}
+                              stroke={asset.color}
+                              strokeWidth={2}
+                              dot={false}
+                              hide={hiddenSeries.has(ticker)}
+                            />
+                          );
+                        })}
+                        {showMarkers && assetMarkers.filter(m => !isCashTx(m) && (!chartRangeCutoff || m.chartDate >= chartRangeCutoff)).map((m) => (
+                          !hiddenSeries.has(m.ticker) && (
+                            <ReferenceDot
+                              key={`a-${m.id}`}
+                              x={m.chartDate}
+                              y={m.value}
+                              r={5}
+                              fill={m.type === 'buy' ? '#10b981' : '#ef4444'}
+                              stroke="#fff"
+                              strokeWidth={2}
+                              isFront
+                            />
+                          )
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  );
+                })()
+                : chartPage === 3 ? (() => {
                   const lastPoint = chartData[chartData.length - 1];
                   let pieData, total, isReturnMode = pieMode === 1;
                   if (!isReturnMode) {
-                    pieData = chartTickers
+                    const allocTickers = hasCashTx && (lastPoint?.[CASH_TICKER] ?? 0) > 0 ? [...chartTickers, CASH_TICKER] : chartTickers;
+                    pieData = allocTickers
                       .map((ticker) => ({
-                        name: `${selectedAssets[ticker]?.name || ticker} (${ticker})`,
+                        name: ticker === CASH_TICKER ? 'Bank Account' : `${selectedAssets[ticker]?.name || ticker} (${ticker})`,
                         value: lastPoint?.[ticker] ?? 0,
                         color: selectedAssets[ticker]?.color || '#94a3b8',
                       }))
@@ -1857,20 +2122,20 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   );
                 })()
 
-                : chartPage === 3 ? (() => {
+                : chartPage === 4 ? (() => {
                   // Deposits vs Value — area chart
                   const sortedTx = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
                   const depositMap = new Map();
                   let cumDeposits = 0;
                   let cumWithdrawals = 0;
                   sortedTx.forEach((tx) => {
-                    if (tx.type === 'buy') cumDeposits += tx.amount;
-                    else cumWithdrawals += tx.amount;
+                    if (tx.type === 'buy' || tx.type === 'deposit') cumDeposits += tx.amount;
+                    else if (tx.type === 'sell' || tx.type === 'withdraw') cumWithdrawals += tx.amount;
                     depositMap.set(tx.date, { deposits: cumDeposits, withdrawals: cumWithdrawals });
                   });
                   let lastDep = 0;
                   let lastWith = 0;
-                  const areaData = chartData.map((p) => {
+                  const areaData = filteredChartData.map((p) => {
                     const d = depositMap.get(p.date);
                     if (d) { lastDep = d.deposits; lastWith = d.withdrawals; }
                     return {
@@ -1900,8 +2165,8 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   );
                 })()
 
-                : chartPage === 4 ? (() => {
-                  // Returns by Asset — bar chart (page 4)
+                : chartPage === 5 ? (() => {
+                  // Returns by Asset — bar chart (page 5)
                   const lastPoint = chartData[chartData.length - 1];
                   const barData = chartTickers
                     .map((ticker) => {
@@ -1941,8 +2206,34 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   );
                 })()
 
+                : chartPage === 7 ? (() => {
+                  // Bank Balance — step line chart
+                  if (!hasCashTx) return (
+                    <div className="h-full flex items-center justify-center text-slate-400">
+                      <p className="font-bold text-sm">No bank transactions yet</p>
+                    </div>
+                  );
+                  const bankColor = selectedAssets[CASH_TICKER]?.color || '#6366f1';
+                  return (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={filteredChartData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="5 5" vertical={false} stroke={dark ? '#334155' : '#f1f5f9'} />
+                        <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} minTickGap={60}
+                          tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })} />
+                        <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
+                          tickFormatter={(v) => formatShort(v)} />
+                        <Tooltip
+                          contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
+                          itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
+                          formatter={(v) => [formatCurrency(v), 'Bank Balance']}
+                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+                        <Area type="stepAfter" dataKey={CASH_TICKER} name="Bank Balance" stroke={bankColor} fill={bankColor} fillOpacity={0.12} strokeWidth={2.5} dot={false} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  );
+                })()
                 : (() => {
-                  // Asset Price — line chart (page 5)
+                  // Asset Price — line chart (page 6)
                   const ticker = chartTickers[priceAssetIdx % chartTickers.length];
                   if (!ticker || !livePriceCache?.[ticker]) return (
                     <div className="h-full flex items-center justify-center text-slate-400">
@@ -1957,7 +2248,8 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                   const windowStart = new Date(earliestTx);
                   windowStart.setDate(windowStart.getDate() - 30);
                   const windowStartStr = windowStart.toISOString().split('T')[0];
-                  const priceData = allPriceData.filter((p) => p.date >= windowStartStr);
+                  const minDate = chartRangeCutoff && chartRangeCutoff > windowStartStr ? chartRangeCutoff : windowStartStr;
+                  const priceData = allPriceData.filter((p) => p.date >= minDate);
                   const dateIdx = new Map(priceData.map((p, i) => [p.date, i]));
                   const tickerTxMarkers = tickerTxs
                     .map((tx) => {
@@ -2167,9 +2459,14 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
             </div>
             </div>
             {quickAddPreview && (
-              <div className={`flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${quickAddPreview.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-200 text-emerald-700' : 'bg-rose-50 dark:bg-rose-950 border-rose-200 text-rose-700'}`}>
-                <span className="uppercase text-[10px] font-black w-8">{quickAddPreview.type}</span>
-                <span className="flex-1 truncate min-w-[100px]">{quickAddPreview.name} ({quickAddPreview.ticker})</span>
+              <div className={`flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${
+                quickAddPreview.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-200 text-emerald-700'
+                : quickAddPreview.type === 'deposit' ? 'bg-indigo-50 dark:bg-indigo-950 border-indigo-200 text-indigo-700'
+                : quickAddPreview.type === 'withdraw' ? 'bg-amber-50 dark:bg-amber-950 border-amber-200 text-amber-700'
+                : 'bg-rose-50 dark:bg-rose-950 border-rose-200 text-rose-700'
+              }`}>
+                <span className="uppercase text-[10px] font-black">{quickAddPreview.type}</span>
+                <span className="flex-1 truncate min-w-[60px]">{quickAddPreview.ticker === CASH_TICKER ? 'Bank Account' : `${quickAddPreview.name} (${quickAddPreview.ticker})`}</span>
                 <span>{formatCurrency(quickAddPreview.amount)}</span>
                 <span className="text-slate-400 text-[10px]">{formatShortDate(quickAddPreview.date)}</span>
                 <button onClick={confirmQuickAdd} className="p-1 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 transition-colors" title="Confirm">
@@ -2187,26 +2484,54 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
               </div>
             )}
             <div className="border-t border-slate-100 dark:border-slate-700" />
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => { setAddTxOpen(false); openBuyModal(); }}
-                className="flex flex-col items-center gap-3 p-5 rounded-2xl bg-emerald-50 dark:bg-emerald-950 border border-emerald-100 dark:border-emerald-900 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-all active:scale-95"
-              >
-                <div className="w-12 h-12 rounded-xl bg-emerald-600 flex items-center justify-center shadow-lg">
-                  <ShoppingCart className="w-5 h-5 text-white" />
+            <div className="space-y-4">
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Stocks</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => { setAddTxOpen(false); openBuyModal(); }}
+                    className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950 border border-emerald-100 dark:border-emerald-900 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-all active:scale-95"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center shadow">
+                      <ShoppingCart className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">Buy</span>
+                  </button>
+                  <button
+                    onClick={() => { setAddTxOpen(false); openSellModal(); }}
+                    disabled={ownedTickers.length === 0}
+                    className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950 border border-rose-100 dark:border-rose-900 hover:bg-rose-100 dark:hover:bg-rose-900 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-rose-600 flex items-center justify-center shadow">
+                      <HandCoins className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="text-xs font-bold text-rose-700 dark:text-rose-400">Sell</span>
+                  </button>
                 </div>
-                <span className="text-sm font-bold text-emerald-700 dark:text-emerald-400">Buy</span>
-              </button>
-              <button
-                onClick={() => { setAddTxOpen(false); openSellModal(); }}
-                disabled={ownedTickers.length === 0}
-                className="flex flex-col items-center gap-3 p-5 rounded-2xl bg-rose-50 dark:bg-rose-950 border border-rose-100 dark:border-rose-900 hover:bg-rose-100 dark:hover:bg-rose-900 transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <div className="w-12 h-12 rounded-xl bg-rose-600 flex items-center justify-center shadow-lg">
-                  <HandCoins className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Bank</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => { setAddTxOpen(false); openDepositModal(); }}
+                    className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950 border border-indigo-100 dark:border-indigo-900 hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-all active:scale-95"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center shadow">
+                      <Landmark className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="text-xs font-bold text-indigo-700 dark:text-indigo-400">Deposit</span>
+                  </button>
+                  <button
+                    onClick={() => { setAddTxOpen(false); openWithdrawModal(); }}
+                    className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-950 border border-amber-100 dark:border-amber-900 hover:bg-amber-100 dark:hover:bg-amber-900 transition-all active:scale-95"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-amber-600 flex items-center justify-center shadow">
+                      <Landmark className="w-4 h-4 text-white" />
+                    </div>
+                    <span className="text-xs font-bold text-amber-700 dark:text-amber-400">Withdraw</span>
+                  </button>
                 </div>
-                <span className="text-sm font-bold text-rose-700 dark:text-rose-400">Sell</span>
-              </button>
+              </div>
             </div>
             <div className="border-t border-slate-100 dark:border-slate-700" />
             <div className="space-y-2">
@@ -2435,6 +2760,53 @@ tickerFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                 })}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Bank Deposit / Withdraw Modal ─────────────────────────────── */}
+      {(modalMode === 'deposit' || modalMode === 'withdraw') && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm" onClick={closeModal}>
+          <div className="bg-white dark:bg-slate-800 rounded-[2rem] shadow-2xl w-full max-w-sm mx-4 p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className={`text-xs font-bold uppercase tracking-widest flex items-center gap-2 ${modalMode === 'deposit' ? 'text-indigo-600' : 'text-amber-600'}`}>
+                <Landmark className="w-4 h-4" /> {modalMode === 'deposit' ? 'Bank Deposit' : 'Bank Withdrawal'}
+              </h3>
+              <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 p-1">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
+                  <input type="number" value={modalAmount} onChange={(e) => {
+                    const value = e.target.value;
+                    const numValue = Number(value);
+                    if (value !== '' && !isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
+                      setModalAmount(numValue);
+                    } else if (value === '') {
+                      setModalAmount(0);
+                    }
+                  }}
+                    autoFocus
+                    className={`w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 outline-none ${modalMode === 'deposit' ? 'focus:ring-indigo-500' : 'focus:ring-amber-500'}`} />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Date</label>
+                <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
+                  className={`w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 outline-none ${modalMode === 'deposit' ? 'focus:ring-indigo-500' : 'focus:ring-amber-500'}`} />
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Cancel</button>
+              <button onClick={() => { addCashTx(modalMode); closeModal(); }} disabled={modalAmount <= 0}
+                className={`flex-1 py-3 rounded-2xl font-bold text-white shadow-lg transition-all active:scale-95 disabled:opacity-40 ${modalMode === 'deposit' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-amber-600 hover:bg-amber-700'}`}>
+                Record
+              </button>
+            </div>
           </div>
         </div>
       )}

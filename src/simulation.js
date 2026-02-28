@@ -1,9 +1,13 @@
 /**
  * Portfolio simulation using real historical prices.
  * Supports multiple buy/sell transactions per asset.
- * transactions: [{ id, ticker, type: 'buy'|'sell', amount, date, price? }]
+ * transactions: [{ id, ticker, type: 'buy'|'sell'|'deposit'|'withdraw', amount, date, price? }]
  * When tx.price is provided, it is used instead of the day's closing price for unit calculation.
+ * 'deposit' is treated as 'buy', 'withdraw' is treated as 'sell'.
  */
+
+const isBuyType = (type) => type === 'buy' || type === 'deposit';
+const isSellType = (type) => type === 'sell' || type === 'withdraw';
 
 export function simulate(priceData, transactions) {
   const txByTicker = {};
@@ -44,7 +48,7 @@ export function simulate(priceData, transactions) {
     txByTicker[ticker].forEach((tx) => {
       const price = tx.price || priceMap[ticker].get(tx.date);
       if (!price) return;
-      if (tx.type === 'buy') {
+      if (isBuyType(tx.type)) {
         units += tx.amount / price;
       } else {
         units = Math.max(0, units - tx.amount / price);
@@ -114,7 +118,7 @@ export function computeStats(chartData, tickers, transactions, assetNames, asset
     let withdrawals = 0;
     
     tickerTxs.forEach((tx) => {
-      if (tx.type === 'buy') {
+      if (isBuyType(tx.type)) {
         deposits += tx.amount;
       } else {
         withdrawals += tx.amount;
