@@ -455,6 +455,8 @@ const App = () => {
   const [shareOpen, setShareOpen] = useState(false);
   const [shareStatus, setShareStatus] = useState(null); // 'capturing' | 'done' | 'error' | null
   const [shareResult, setShareResult] = useState(null); // { url, blob }
+  const [deletedTx, setDeletedTx] = useState(null); // For undo functionality
+  const [undoTimer, setUndoTimer] = useState(null);
 
   const chartRef = useRef(null);
   const statsRef = useRef(null);
@@ -1040,23 +1042,72 @@ const App = () => {
   }, [supabase, stats, chartData, transactions, hiddenAssets]);
 
   const removeTx = useCallback((txId) => {
+    // Clear any existing timer first
+    setUndoTimer((prev) => {
+      if (prev) clearTimeout(prev);
+      return null;
+    });
+    
     setTransactions((prev) => {
+      const txToDelete = prev.find((tx) => tx.id === txId);
+      if (!txToDelete) return prev;
+      
       const next = prev.filter((tx) => tx.id !== txId);
-      // Clean up selectedAssets and fetchedRanges if ticker has no more transactions
+      // Check if this ticker will be completely removed
       const remaining = new Set(next.map((tx) => tx.ticker));
-      setSelectedAssets((sa) => {
-        const out = { ...sa };
-        Object.keys(out).forEach((t) => {
-          if (!remaining.has(t)) {
-            delete out[t];
-            delete fetchedRangesRef.current[t];
-          }
+      const tickerWillBeRemoved = !remaining.has(txToDelete.ticker);
+      
+      // Store the deleted transaction for undo, including asset info if it will be removed
+      const deletedAsset = tickerWillBeRemoved && selectedAssets[txToDelete.ticker]
+        ? { [txToDelete.ticker]: selectedAssets[txToDelete.ticker] }
+        : null;
+      
+      setDeletedTx({ tx: txToDelete, asset: deletedAsset });
+      
+      // Set new timer to permanently delete after 5 seconds
+      const timer = setTimeout(() => {
+        setDeletedTx(null);
+        setUndoTimer(null);
+      }, 5000);
+      setUndoTimer(timer);
+      
+      // Clean up selectedAssets and fetchedRanges if ticker has no more transactions
+      if (tickerWillBeRemoved) {
+        setSelectedAssets((sa) => {
+          const out = { ...sa };
+          delete out[txToDelete.ticker];
+          delete fetchedRangesRef.current[txToDelete.ticker];
+          return out;
         });
-        return out;
-      });
+      }
+      
       return next;
     });
-  }, []);
+  }, [selectedAssets]);
+  
+  const undoDelete = useCallback(() => {
+    const currentDeleted = deletedTx;
+    if (!currentDeleted) return;
+    
+    // Clear the timer immediately
+    setUndoTimer((timer) => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      return null;
+    });
+    
+    // Clear undo state immediately (removes the toast)
+    setDeletedTx(null);
+    
+    // Restore the transaction
+    setTransactions((txs) => [...txs, currentDeleted.tx]);
+    
+    // Restore asset if it was removed
+    if (currentDeleted.asset) {
+      setSelectedAssets((assets) => ({ ...assets, ...currentDeleted.asset }));
+    }
+  }, [deletedTx]);
 
   const toggleHideAsset = useCallback((ticker) => {
     setHiddenAssets((prev) => {
@@ -2907,32 +2958,13 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
-                  <input type="number" value={typeof modalAmount === 'number' ? modalAmount : (Number(modalAmount) || 0)} onChange={(e) => {
+                  <input type="number" value={modalAmount} onChange={(e) => {
                       const value = e.target.value;
-                      if (value === '' || value === null || value === undefined) {
+                      const numValue = Number(value);
+                      if (value !== '' && !isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
+                        setModalAmount(numValue);
+                      } else if (value === '') {
                         setModalAmount(0);
-                      } else {
-                        const numValue = Number(value);
-                        const newAmount = isNaN(numValue) ? 0 : Math.max(0, numValue);
-                        setModalAmount(newAmount);
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const input = e.currentTarget;
-                        // Read the current value directly from the input field
-                        const rawValue = input.value;
-                        if (rawValue && rawValue.trim() !== '') {
-                          const amount = Math.max(0, Number(rawValue));
-                          if (amount > 0 && !isNaN(amount)) {
-                            // Just update the state, don't save yet
-                            setModalAmount(amount);
-                            // Blur the input to commit the value
-                            input.blur();
-                          }
-                        }
                       }
                     }}
                     className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none" />
@@ -3190,6 +3222,22 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 <AlertCircle className="w-4 h-4" /> Failed to capture. Try again.
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Undo Toast ────────────────────────────────────────────────────────────── */}
+      {deletedTx && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <div className="bg-slate-900 dark:bg-slate-800 text-white rounded-2xl shadow-2xl px-4 py-3 flex items-center gap-3 border border-slate-700">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+            <span className="text-sm font-bold">Transaction deleted</span>
+            <button
+              onClick={undoDelete}
+              className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-all active:scale-95"
+            >
+              Undo
+            </button>
           </div>
         </div>
       )}
