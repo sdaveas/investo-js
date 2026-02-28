@@ -2958,15 +2958,19 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
-                  <input type="number" value={modalAmount} onChange={(e) => {
+                  <input type="number" value={modalAmount || ''} onChange={(e) => {
                       const value = e.target.value;
-                      const numValue = Number(value);
-                      if (value !== '' && !isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
-                        setModalAmount(numValue);
-                      } else if (value === '') {
-                        setModalAmount(0);
+                      if (value === '') {
+                        setModalAmount('');
+                      } else {
+                        const numValue = Number(value);
+                        if (!isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
+                          setModalAmount(numValue);
+                        }
                       }
                     }}
+                    autoFocus
+                    onFocus={(e) => e.target.select()}
                     className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none" />
                 </div>
               </div>
@@ -2979,7 +2983,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Cancel</button>
-              <button onClick={saveEdit} disabled={modalAmount <= 0}
+              <button onClick={saveEdit} disabled={!modalAmount || modalAmount <= 0}
                 className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
                 Save
               </button>
