@@ -1,6 +1,6 @@
 # Investo
 
-**[Live Demo →](https://investo-js.vercel.app/)** · [Buy me a coffee ☕](https://buymeacoffee.com/br3gan)
+**[Live Demo →](https://whatihave.xyz)** · [Buy me a coffee ☕](https://buymeacoffee.com/br3gan)
 
 An investment portfolio simulator that uses real market data from Yahoo Finance. Build a virtual portfolio by recording buy/sell transactions and track performance over time.
 
@@ -10,17 +10,37 @@ An investment portfolio simulator that uses real market data from Yahoo Finance.
 
 ## Features
 
-- **Transaction Ledger** — Record buy and sell transactions for any asset available on Yahoo Finance
+### Core
+- **Transaction Ledger** — Record buy/sell transactions for stocks and deposit/withdraw for cash
 - **Real Market Data** — Historical prices fetched from Yahoo Finance API
-- **Portfolio Chart** — Interactive time-series chart with per-asset and total portfolio lines, buy/sell markers, and click-to-toggle legend
-- **AI Quick Add** — Natural language input powered by LLM to add transactions:
-  - Simple: `"bought google 1/1/2025 $1000"`
-  - Advanced: `"sold half of my apple 6 months ago"`, `"bought some tesla yesterday for 5k"`
-  - Understands relative dates, fractions, and portfolio context
-- **Performance Stats** — Total return, annualized return, and max drawdown per asset and combined
-- **CSV Import/Export** — Bulk import transactions via CSV/TSV file or paste, export your portfolio
-- **Cloud Sync** — Sign in with Google to sync your portfolio across devices (via Supabase)
-- **Local Persistence** — Portfolio saved to localStorage for anonymous users
+- **Bank Account Tracking** — Track cash deposits and withdrawals alongside your investments
+- **Performance Stats** — Total return, annualized return, and max drawdown per asset
+- **Hide from Net Worth** — Toggle visibility of specific assets in your net worth calculations
+
+### AI-Powered
+- **AI Quick Add** — Natural language transaction input:
+  - `"bought google 1/1/2025 $1000"`
+  - `"sold half of my apple 6 months ago"`
+  - `"deposit $5000 to bank"`
+- **AI Insights** — Get intelligent portfolio analysis that considers both your stock performance and cash position for holistic financial health assessment
+
+### Visualization
+- **Interactive Charts** — Multiple chart views with time range filters (24H, 1W, 1M, 6M, YTD, 5Y, ALL):
+  - Net worth over time
+  - Stock performance comparison
+  - Asset allocation (pie chart)
+  - Deposits vs value
+  - Returns by asset
+  - Individual asset price history
+  - Bank balance over time
+- **Chart Categories** — Switch between All, Stocks, and Bank views
+- **Buy/Sell Markers** — Visual indicators on charts with click-to-toggle legend
+
+### Data Management
+- **CSV Import/Export** — Bulk import transactions or export your portfolio
+- **Cloud Sync** — Sign in with Google to sync across devices (via Supabase)
+- **Local Persistence** — Portfolio auto-saved to localStorage for offline use
+- **Dark Mode** — Synced across devices for signed-in users
 
 ## Tech Stack
 
@@ -48,10 +68,11 @@ VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
 
 Cloud sync is optional — the app works fully offline with localStorage.
 
-### AI Quick Add (Optional)
+### AI Features Setup (Optional)
 
-The AI-powered natural language parser requires deploying a Supabase Edge Function:
+The AI-powered features require deploying Supabase Edge Functions:
 
+#### AI Quick Add
 1. Get a free Google Gemini API key from [aistudio.google.com](https://aistudio.google.com/app/apikey)
 2. Deploy the Edge Function:
 
@@ -62,9 +83,20 @@ npx supabase secrets set GEMINI_API_KEY=YOUR_KEY
 npx supabase functions deploy parse-transaction
 ```
 
-See [supabase/functions/README.md](supabase/functions/README.md) for detailed setup instructions.
+**Without this function**, the app falls back to a basic regex-based parser that works offline but with limited capabilities.
 
-**Without the Edge Function deployed**, the app falls back to a basic regex-based parser that works offline but with limited capabilities.
+#### AI Insights
+1. Get an OpenAI API key from [platform.openai.com](https://platform.openai.com/api-keys)
+2. Deploy the Edge Function:
+
+```bash
+npx supabase secrets set OPENAI_API_KEY=YOUR_KEY
+npx supabase functions deploy generate-insights
+```
+
+**Without this function**, the Insights button will not appear.
+
+See [supabase/functions/README.md](supabase/functions/README.md) for detailed setup instructions.
 
 ## Deployment
 
