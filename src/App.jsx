@@ -451,6 +451,7 @@ const App = () => {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [overviewOpen, setOverviewOpen] = useState(true);
   const [chartsOpen, setChartsOpen] = useState(true);
+  const [summaryOpen, setSummaryOpen] = useState(true);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [addTxOpen, setAddTxOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -2502,12 +2503,15 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
         {/* Summary Table — full width */}
         {stats.length > 0 && (
           <div ref={tableRef} className="bg-white dark:bg-slate-800 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-            <div className="px-4 py-4 sm:p-8 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50/20 dark:bg-slate-800/20">
-              <h2 className="text-base sm:text-xl font-black tracking-tight text-slate-800 dark:text-slate-100 flex items-center gap-2 uppercase">
-                <History className="w-5 h-5 text-slate-400" /> Summary
-              </h2>
+            <div className="px-4 py-4 sm:px-8 sm:py-6">
+              <button onClick={() => setSummaryOpen(v => !v)} className="w-full flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                  <History className="w-4 h-4" /> Summary
+                </h3>
+                <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${summaryOpen ? 'rotate-90' : ''}`} />
+              </button>
             </div>
-            <div className="overflow-x-auto">
+            {summaryOpen && <div className="overflow-x-auto">
               <table className="w-full text-left min-w-[700px]">
                 <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest bg-slate-50/50 dark:bg-slate-800/50">
                   <tr>
@@ -2562,7 +2566,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   })()}
                 </tbody>
               </table>
-            </div>
+            </div>}
           </div>
         )}
       </div>
