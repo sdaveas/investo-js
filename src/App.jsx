@@ -444,6 +444,8 @@ const App = () => {
   const isHydratingRef = useRef(false);
 
   const [colorPickerTicker, setColorPickerTicker] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [overviewOpen, setOverviewOpen] = useState(true);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [addTxOpen, setAddTxOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
@@ -1477,6 +1479,29 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       </div>
                     </button>
                   </div>
+                  <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                    <button
+                      onClick={() => { setImportText(''); setModalMode('import'); setAboutOpen(false); }}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      <Upload className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                      <div>
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Import</p>
+                        <p className="text-[10px] text-slate-400 text-left">CSV or Google Sheets</p>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => { exportCSV(); setAboutOpen(false); }}
+                      disabled={transactions.length === 0}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors disabled:opacity-40"
+                    >
+                      <Download className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                      <div>
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Export</p>
+                        <p className="text-[10px] text-slate-400 text-left">Download as CSV</p>
+                      </div>
+                    </button>
+                  </div>
                   <div className="flex gap-2 pt-2 border-t border-slate-100 dark:border-slate-700">
                     <a
                       href="https://github.com/sdaveas/investo-js"
@@ -1510,25 +1535,27 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
           {sidebarOpen && (
           <aside className="lg:col-span-4 space-y-6">
 
-            {/* Transaction ledger */}
+            {/* Overview */}
             {(selectedTickers.length > 0 || hasCashTx) && (
             <div className="bg-slate-900 text-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] shadow-2xl space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                  <History className="w-4 h-4" /> Transactions
-                </h3>
-                {supabase && stats.length > 0 && (
-                  <button
-                    onClick={generateAIInsights}
-                    disabled={isGeneratingInsights}
-                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-500/20 text-violet-400 hover:bg-violet-500/30 transition-colors disabled:opacity-50 text-[10px] font-bold"
-                  >
-                    {isGeneratingInsights ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Insights
-                  </button>
-                )}
-              </div>
+              <button onClick={() => setOverviewOpen(v => !v)} className="w-full flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4" /> Overview
+                  </h3>
+                  {supabase && stats.length > 0 && (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); generateAIInsights(); }}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-500/20 text-violet-400 hover:bg-violet-500/30 transition-colors text-[10px] font-bold ${isGeneratingInsights ? 'opacity-50 pointer-events-none' : ''}`}
+                    >
+                      {isGeneratingInsights ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Insights
+                    </span>
+                  )}
+                </div>
+                <ChevronRight className={`w-4 h-4 text-slate-500 transition-transform ${overviewOpen ? 'rotate-90' : ''}`} />
+              </button>
 
-              {(() => {
+              {overviewOpen && (() => {
                 const lastPoint = chartData[chartData.length - 1];
                 // Stock calculations
                 const stockBuys = transactions.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
@@ -1610,8 +1637,19 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 </div>
                 );
               })()}
+            </div>
+            )}
 
-              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
+            {/* History */}
+            {(selectedTickers.length > 0 || hasCashTx) && (
+            <div className="bg-slate-900 text-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] shadow-2xl space-y-4">
+              <button onClick={() => setHistoryOpen(v => !v)} className="w-full flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                  <History className="w-4 h-4" /> History
+                </h3>
+                <ChevronRight className={`w-4 h-4 text-slate-500 transition-transform ${historyOpen ? 'rotate-90' : ''}`} />
+              </button>
+              {historyOpen && <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
                 {selectedTickers.map((ticker) => {
                   const asset = selectedAssets[ticker];
                   const txs = txByTicker[ticker] || [];
@@ -1665,8 +1703,6 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     </div>
                   );
                 })}
-              </div>
-
               {/* Bank Account transactions */}
               {hasCashTx && (() => {
                 const cashTxs = txByTicker[CASH_TICKER] || [];
@@ -1698,6 +1734,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   </div>
                 );
               })()}
+              </div>}
             </div>
             )}
 
@@ -2532,22 +2569,6 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   </button>
                 </div>
               </div>
-            </div>
-            <div className="border-t border-slate-100 dark:border-slate-700" />
-            <div className="space-y-2">
-              <button
-                onClick={() => { setAddTxOpen(false); setImportText(''); setModalMode('import'); }}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 text-xs font-bold transition-all active:scale-95"
-              >
-                <Upload className="w-3.5 h-3.5" /> Import
-              </button>
-              <button
-                onClick={() => { setAddTxOpen(false); exportCSV(); }}
-                disabled={transactions.length === 0}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 text-xs font-bold transition-all active:scale-95 disabled:opacity-40"
-              >
-                <Download className="w-3.5 h-3.5" /> Export
-              </button>
             </div>
           </div>
         </div>
