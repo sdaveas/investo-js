@@ -604,15 +604,12 @@ const App = () => {
   const saveEdit = useCallback((overrideAmount = null, overrideDate = null, overridePrice = null) => {
     if (!editingTx) return;
     const rawAmount = overrideAmount !== null ? overrideAmount : modalAmount;
-    console.log('[SAVE] saveEdit called:', { rawAmount, modalAmount, editingTx });
     // Convert to number if it's a string
     const numAmount = typeof rawAmount === 'string' ? Number(rawAmount) : rawAmount;
-    console.log('[SAVE] Converted to number:', { numAmount, isNaN: isNaN(numAmount), isFinite: isFinite(numAmount) });
     // Ensure amount is a valid number
     const amountToSave = (!isNaN(numAmount) && isFinite(numAmount) && numAmount > 0) 
       ? numAmount 
       : (editingTx.amount || DEFAULT_AMOUNT);
-    console.log('[SAVE] Amount to save:', amountToSave);
     const dateToSave = overrideDate !== null ? overrideDate : modalDate;
     const priceToSave = overridePrice !== null ? overridePrice : modalPrice;
     setTransactions((prev) =>
@@ -621,7 +618,6 @@ const App = () => {
         const updated = { ...tx, amount: amountToSave, date: dateToSave };
         if (priceToSave) updated.price = priceToSave;
         else delete updated.price;
-        console.log('[SAVE] Updated transaction:', updated);
         return updated;
       }),
     );
@@ -2970,28 +2966,21 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     value={modalAmount === '' ? '' : modalAmount} 
                     onChange={(e) => {
                       const value = e.target.value;
-                      console.log('[EDIT] Input changed:', { value, currentModalAmount: modalAmount });
                       // Allow empty
                       if (value === '') {
-                        console.log('[EDIT] Setting to empty string');
                         setModalAmount('');
                         return;
                       }
                       // Allow partial number entry (e.g., "10.", "100")
                       if (/^\d*\.?\d*$/.test(value)) {
-                        console.log('[EDIT] Valid number format');
                         // If it's a valid number or partial number, store as is
                         const numValue = parseFloat(value);
                         if (!isNaN(numValue)) {
-                          console.log('[EDIT] Setting modalAmount to number:', numValue);
                           setModalAmount(numValue);
                         } else {
                           // Allow typing partial numbers like "10."
-                          console.log('[EDIT] Setting modalAmount to string:', value);
                           setModalAmount(value);
                         }
-                      } else {
-                        console.log('[EDIT] Invalid format, ignoring');
                       }
                     }}
                     autoFocus
