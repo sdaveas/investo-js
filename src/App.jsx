@@ -604,9 +604,11 @@ const App = () => {
   const saveEdit = useCallback((overrideAmount = null, overrideDate = null, overridePrice = null) => {
     if (!editingTx) return;
     const rawAmount = overrideAmount !== null ? overrideAmount : modalAmount;
+    // Convert to number if it's a string
+    const numAmount = typeof rawAmount === 'string' ? Number(rawAmount) : rawAmount;
     // Ensure amount is a valid number
-    const amountToSave = (typeof rawAmount === 'number' && !isNaN(rawAmount) && isFinite(rawAmount) && rawAmount > 0) 
-      ? rawAmount 
+    const amountToSave = (!isNaN(numAmount) && isFinite(numAmount) && numAmount > 0) 
+      ? numAmount 
       : (editingTx.amount || DEFAULT_AMOUNT);
     const dateToSave = overrideDate !== null ? overrideDate : modalDate;
     const priceToSave = overridePrice !== null ? overridePrice : modalPrice;
