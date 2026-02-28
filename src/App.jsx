@@ -1498,7 +1498,7 @@ const App = () => {
 
   return (
     <div className={`min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8${dark ? ' dark' : ''}`}>
-      <div className="max-w-7xl mx-auto space-y-8">
+      <div className="max-w-7xl mx-auto space-y-4">
 
         {/* Menu */}
         <div className="flex items-center">
@@ -1624,11 +1624,11 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
 
           {/* ── Sidebar ──────────────────────────────────────────────────── */}
           {sidebarOpen && (
-          <aside className="lg:col-span-4 space-y-6">
+          <aside className="lg:col-span-4 space-y-4">
 
             {/* Overview */}
             {(selectedTickers.length > 0 || hasCashTx) && (
@@ -1845,7 +1845,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
           )}
 
           {/* ── Main ─────────────────────────────────────────────────────── */}
-          <main className={`${sidebarOpen ? 'lg:col-span-8' : 'lg:col-span-12'} space-y-8`}>
+          <main className={`${sidebarOpen ? 'lg:col-span-8' : 'lg:col-span-12'} space-y-4`}>
 
             {/* Chart */}
             {transactions.length > 0 && <div ref={chartRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 ${chartsOpen ? 'md:p-8' : ''} rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 ${chartsOpen ? 'h-[380px] sm:h-[450px] md:h-[550px]' : ''} flex flex-col overflow-hidden relative`}>
@@ -3282,19 +3282,6 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
         </div>
       )}
 
-      {/* ── Footer ────────────────────────────────────────────────────────────── */}
-      <div className="border-t border-slate-200 dark:border-slate-700 mt-8" />
-      <footer className="flex items-center justify-center gap-4 pt-4 pb-8 text-xs font-bold text-slate-400">
-        <a href="https://github.com/sdaveas/investo-js" target="_blank" rel="noopener noreferrer"
-          className="flex items-center gap-1.5 hover:text-slate-600 dark:hover:text-slate-300 dark:text-slate-300 transition-colors">
-          <Github className="w-3.5 h-3.5" /> GitHub
-        </a>
-        <span className="text-slate-200">·</span>
-        <a href="https://buymeacoffee.com/br3gan" target="_blank" rel="noopener noreferrer"
-          className="flex items-center gap-1.5 hover:text-rose-500 transition-colors">
-          <Heart className="w-3.5 h-3.5" /> Buy me a coffee
-        </a>
-      </footer>
 
       <style>{`.custom-scrollbar::-webkit-scrollbar { width: 4px; } .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }`}</style>
       <Analytics />
