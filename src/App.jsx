@@ -1381,6 +1381,7 @@ const App = () => {
     const data = simulate(livePriceCache, activeTx);
     setChartData(data);
 
+    // Compute stats for visible transactions (for correct Combined total)
     const tickers = [...new Set(activeTx.map((tx) => tx.ticker))];
     const names = Object.fromEntries(
       Object.entries(selectedAssets).map(([t, a]) => [t, a.name]),
@@ -1388,8 +1389,19 @@ const App = () => {
     const colors = Object.fromEntries(
       Object.entries(selectedAssets).map(([t, a]) => [t, a.color]),
     );
-    setStats(computeStats(data, tickers, activeTx, names, colors));
-  }, [livePriceCache, visibleTransactions, selectedAssets]);
+    const visibleStats = computeStats(data, tickers, activeTx, names, colors);
+
+    // Also compute stats for hidden assets to show in Stats section
+    const hiddenTx = transactions.filter((tx) => hiddenAssets.has(tx.ticker) && livePriceCache[tx.ticker]?.length > 0);
+    if (hiddenTx.length > 0) {
+      const hiddenData = simulate(livePriceCache, hiddenTx);
+      const hiddenTickers = [...new Set(hiddenTx.map((tx) => tx.ticker))];
+      const hiddenStats = computeStats(hiddenData, hiddenTickers, hiddenTx, names, colors).filter((s) => !s.isPortfolio);
+      setStats([...visibleStats, ...hiddenStats]);
+    } else {
+      setStats(visibleStats);
+    }
+  }, [livePriceCache, visibleTransactions, transactions, selectedAssets]);
 
   const chartTickers = selectedTickers.filter((t) => !hiddenAssets.has(t) && livePriceCache?.[t]);
 
@@ -2480,7 +2492,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   {assets.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                       {assets.map((stat, idx) => (
-                        <div key={idx} className="p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-white dark:bg-slate-800 border-slate-200 shadow-sm transition-all hover:translate-y-[-4px]">
+                        <div key={idx} className={`p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-white dark:bg-slate-800 border-slate-200 shadow-sm transition-all hover:translate-y-[-4px] ${hiddenAssets.has(stat.ticker) ? 'opacity-50' : ''}`}>
                           <div className="flex justify-between items-start mb-4">
                             <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
                             {displayTicker(stat.ticker)}
@@ -2533,7 +2545,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {stats.filter((s) => !s.isPortfolio).map((stat, idx) => (
+                  {stats.filter((s) => !s.isPortfolio && !hiddenAssets.has(s.ticker)).map((stat, idx) => (
                     <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                       <td className="px-4 sm:px-8 py-4 sm:py-6">
                         <div className="flex items-center gap-3 sm:gap-4">
