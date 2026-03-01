@@ -1644,22 +1644,12 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
 
             {/* Overview */}
             {(selectedTickers.length > 0 || hasCashTx) && (
-            <div className="bg-slate-900 text-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] shadow-2xl space-y-4">
+            <div className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 space-y-4">
               <button onClick={() => setOverviewOpen(v => !v)} className="w-full flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                    <BarChart3 className="w-4 h-4" /> Overview
-                  </h3>
-                  {supabase && stats.length > 0 && (
-                    <span
-                      onClick={(e) => { e.stopPropagation(); generateAIInsights(); }}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-500/20 text-violet-400 hover:bg-violet-500/30 transition-colors text-[10px] font-bold ${isGeneratingInsights ? 'opacity-50 pointer-events-none' : ''}`}
-                    >
-                      {isGeneratingInsights ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Insights
-                    </span>
-                  )}
-                </div>
-                <ChevronRight className={`w-4 h-4 text-slate-500 transition-transform ${overviewOpen ? 'rotate-90' : ''}`} />
+                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4" /> Overview
+                </h3>
+                <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${overviewOpen ? 'rotate-90' : ''}`} />
               </button>
 
               {overviewOpen && (() => {
@@ -1686,27 +1676,27 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   <div className="p-4 rounded-2xl border bg-emerald-500/10 border-emerald-500/20 space-y-3">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Stocks Invested</p>
-                        <p className="text-xl font-black text-white">{formatCurrency(stockBuys)}</p>
+                        <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Stocks Invested</p>
+                        <p className="text-xl font-black">{formatCurrency(stockBuys)}</p>
                       </div>
-                      <p className="text-[10px] font-bold text-white/30">{visibleStockTickers.length} asset{visibleStockTickers.length !== 1 ? 's' : ''}</p>
+                      <p className="text-[10px] font-bold text-slate-400">{visibleStockTickers.length} asset{visibleStockTickers.length !== 1 ? 's' : ''}</p>
                     </div>
                     {stockSells > 0 && (
                     <>
-                      <div className="border-t border-white/10" />
+                      <div className="border-t border-slate-200 dark:border-slate-700" />
                       <div>
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Stocks Sold</p>
-                        <p className="text-xl font-black text-emerald-400">{formatCurrency(stockSells)}</p>
+                        <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Stocks Sold</p>
+                        <p className="text-xl font-black text-emerald-600 dark:text-emerald-400">{formatCurrency(stockSells)}</p>
                       </div>
                     </>
                     )}
-                    <div className="border-t border-white/10" />
+                    <div className="border-t border-slate-200 dark:border-slate-700" />
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Return</p>
-                        <p className={`text-xl font-black ${stockPositive ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(stockReturn)}</p>
+                        <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Return</p>
+                        <p className={`text-xl font-black ${stockPositive ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{formatCurrency(stockReturn)}</p>
                       </div>
-                      <span className={`text-xs font-black px-2 py-1 rounded-lg ${stockPositive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>{stockPositive ? '+' : ''}{stockReturnPct.toFixed(1)}%</span>
+                      <span className={`text-xs font-black px-2 py-1 rounded-lg ${stockPositive ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/20 text-rose-600 dark:text-rose-400'}`}>{stockPositive ? '+' : ''}{stockReturnPct.toFixed(1)}%</span>
                     </div>
                   </div>
                   )}
@@ -1714,33 +1704,33 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   {hasCashTx && !hiddenAssets.has(CASH_TICKER) && (
                   <div className="p-4 rounded-2xl border bg-indigo-500/10 border-indigo-500/20 space-y-3">
                     <div>
-                      <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Bank Deposits</p>
-                      <p className="text-xl font-black text-indigo-400">{formatCurrency(bankDeposited)}</p>
+                      <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Bank Deposits</p>
+                      <p className="text-xl font-black text-indigo-600 dark:text-indigo-400">{formatCurrency(bankDeposited)}</p>
                     </div>
                     {bankWithdrawn > 0 && (
                     <>
-                      <div className="border-t border-white/10" />
+                      <div className="border-t border-slate-200 dark:border-slate-700" />
                       <div>
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Withdrawals</p>
-                        <p className="text-xl font-black text-amber-400">{formatCurrency(bankWithdrawn)}</p>
+                        <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Withdrawals</p>
+                        <p className="text-xl font-black text-amber-600 dark:text-amber-400">{formatCurrency(bankWithdrawn)}</p>
                       </div>
-                      <div className="border-t border-white/10" />
+                      <div className="border-t border-slate-200 dark:border-slate-700" />
                       <div>
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Bank Balance</p>
-                        <p className="text-xl font-black text-indigo-400">{formatCurrency(bankBalance)}</p>
+                        <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Bank Balance</p>
+                        <p className="text-xl font-black text-indigo-600 dark:text-indigo-400">{formatCurrency(bankBalance)}</p>
                       </div>
                     </>
                     )}
                   </div>
                   )}
                   {/* Net Worth */}
-                  <div className="p-4 rounded-2xl border bg-white/5 border-white/10">
+                  <div className="p-4 rounded-2xl border bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">Net Worth</p>
-                        <p className="text-2xl font-black text-white">{formatCurrency(netWorth)}</p>
+                        <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">Net Worth</p>
+                        <p className="text-2xl font-black">{formatCurrency(netWorth)}</p>
                       </div>
-                      <p className="text-[10px] font-bold text-white/30">{transactions.length} tx</p>
+                      <p className="text-[10px] font-bold text-slate-400">{transactions.length} tx</p>
                     </div>
                   </div>
                 </div>
@@ -1751,12 +1741,12 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
 
             {/* History */}
             {(selectedTickers.length > 0 || hasCashTx) && (
-            <div className="bg-slate-900 text-white p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] shadow-2xl space-y-4">
+            <div className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 space-y-4">
               <button onClick={() => setHistoryOpen(v => !v)} className="w-full flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
                   <History className="w-4 h-4" /> History
                 </h3>
-                <ChevronRight className={`w-4 h-4 text-slate-500 transition-transform ${historyOpen ? 'rotate-90' : ''}`} />
+                <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${historyOpen ? 'rotate-90' : ''}`} />
               </button>
               {historyOpen && <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
                 {selectedTickers.map((ticker) => {
@@ -1774,7 +1764,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                             title="Change color"
                           />
                           {colorPickerTicker === ticker && (
-                            <div className="absolute left-4 top-0 z-50 flex gap-1.5 p-2 rounded-xl bg-slate-800 border border-slate-700 shadow-xl">
+                            <div className="absolute left-4 top-0 z-50 flex gap-1.5 p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-xl">
                               {COLORS.map((c) => (
                                 <button
                                   key={c}
@@ -1782,7 +1772,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                                     setSelectedAssets((prev) => ({ ...prev, [ticker]: { ...prev[ticker], color: c } }));
                                     setColorPickerTicker(null);
                                   }}
-                                  className={`w-5 h-5 rounded-full transition-transform hover:scale-125 ${asset.color === c ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-800' : ''}`}
+                                  className={`w-5 h-5 rounded-full transition-transform hover:scale-125 ${asset.color === c ? 'ring-2 ring-slate-900 dark:ring-white ring-offset-1 ring-offset-white dark:ring-offset-slate-800' : ''}`}
                                   style={{ backgroundColor: c }}
                                 />
                               ))}
@@ -1803,11 +1793,11 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                         </button>
                       </div>
                       {txs.map((tx) => (
-                        <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'buy' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
+                        <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'buy' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400'}`}>
                           <span className="uppercase text-[10px] font-black w-8">{tx.type}</span>
-                          <span className="flex-1 text-white/80">{formatCurrency(tx.amount)}{tx.price ? <span className="text-white/30 ml-1">@${tx.price}</span> : ''}</span>
-                          <span className="text-white/40 text-[10px]">{formatShortDate(tx.date)}</span>
-                          <button onClick={(e) => { e.stopPropagation(); removeTx(tx.id); }} className="text-white/20 hover:text-rose-400 p-0.5 transition-colors">
+                          <span className="flex-1 text-slate-700 dark:text-slate-300">{formatCurrency(tx.amount)}{tx.price ? <span className="text-slate-400 ml-1">@${tx.price}</span> : ''}</span>
+                          <span className="text-slate-400 text-[10px]">{formatShortDate(tx.date)}</span>
+                          <button onClick={(e) => { e.stopPropagation(); removeTx(tx.id); }} className="text-slate-300 dark:text-slate-600 hover:text-rose-400 p-0.5 transition-colors">
                             <Trash2 className="w-3 h-3" />
                           </button>
                         </div>
@@ -1837,11 +1827,11 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       </button>
                     </div>
                     {cashTxs.map((tx) => (
-                      <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'deposit' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}>
+                      <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'deposit' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400'}`}>
                         <span className="uppercase text-[10px] font-black w-14">{tx.type === 'deposit' ? 'deposit' : 'withdraw'}</span>
-                        <span className="flex-1 text-white/80">{formatCurrency(tx.amount)}</span>
-                        <span className="text-white/40 text-[10px]">{formatShortDate(tx.date)}</span>
-                        <button onClick={(e) => { e.stopPropagation(); removeTx(tx.id); }} className="text-white/20 hover:text-rose-400 p-0.5 transition-colors">
+                        <span className="flex-1 text-slate-700 dark:text-slate-300">{formatCurrency(tx.amount)}</span>
+                        <span className="text-slate-400 text-[10px]">{formatShortDate(tx.date)}</span>
+                        <button onClick={(e) => { e.stopPropagation(); removeTx(tx.id); }} className="text-slate-300 dark:text-slate-600 hover:text-rose-400 p-0.5 transition-colors">
                           <Trash2 className="w-3 h-3" />
                         </button>
                       </div>
