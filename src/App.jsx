@@ -475,7 +475,7 @@ const App = () => {
   const isHydratingRef = useRef(false);
 
   const [colorPickerTicker, setColorPickerTicker] = useState(null);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(true);
   const [overviewOpen, setOverviewOpen] = useState(() => savedPortfolio?.viewStates?.overviewOpen ?? true);
   const [chartsOpen, setChartsOpen] = useState(() => savedPortfolio?.viewStates?.chartsOpen ?? true);
   const [summaryOpen, setSummaryOpen] = useState(() => savedPortfolio?.viewStates?.summaryOpen ?? true);
@@ -491,9 +491,35 @@ const App = () => {
   const chartRef = useRef(null);
   const statsRef = useRef(null);
   const tableRef = useRef(null);
+  const overviewRef = useRef(null);
+  const [overviewHeight, setOverviewHeight] = useState(0);
+  const [statsHeight, setStatsHeight] = useState(0);
+  const statsOpenHeightRef = useRef(0);
 
   const colorIdx = useRef(savedPortfolio?.colorIdx || 0);
   const fetchedRangesRef = useRef({});  // { ticker: startDate } — tracks what we've already fetched
+
+  // Track overview panel height for chart sync
+  useEffect(() => {
+    const el = overviewRef.current;
+    if (!el) { setOverviewHeight(0); return; }
+    const obs = new ResizeObserver(() => setOverviewHeight(el.offsetHeight));
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [overviewOpen]);
+
+  // Track stats panel height for history sync
+  useEffect(() => {
+    const el = statsRef.current;
+    if (!el) { setStatsHeight(0); return; }
+    const obs = new ResizeObserver(() => {
+      const h = el.offsetHeight;
+      setStatsHeight(h);
+      if (statsOpen && h > 100) statsOpenHeightRef.current = h;
+    });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [statsOpen]);
 
   // ─── Derived ───────────────────────────────────────────────────────────────
 
@@ -1832,18 +1858,48 @@ const App = () => {
         <div className="flex items-center">
           <button
             onClick={() => setAddTxOpen(true)}
-            className="px-4 py-2 rounded-2xl font-bold transition-all flex items-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white text-sm"
+            className={`px-4 py-2 rounded-2xl font-bold transition-all flex items-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white text-sm${transactions.length === 0 ? ' animate-[pulse-ring_2s_ease-in-out_infinite]' : ''}`}
           >
             New Transaction
           </button>
           <button
             onClick={toggleCurrency}
-            className="ml-3 px-3 py-2 rounded-2xl font-black text-sm transition-all active:scale-95 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300"
+            className={`ml-3 px-3 py-2 rounded-2xl font-black text-sm transition-all active:scale-95 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300${transactions.length === 0 ? ' animate-[pulse-ring_2s_ease-in-out_infinite]' : ''}`}
             title={`Display in ${displayCurrency === 'USD' ? 'EUR' : 'USD'}`}
           >
             {displayCurrency === 'USD' ? '$' : '€'}
           </button>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+          {supabase && (
+            user ? (
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-slate-100 dark:bg-slate-700">
+                  {user.avatar ? (
+                    <img src={user.avatar} alt="" className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />
+                  ) : (
+                    <Cloud className="w-4 h-4 text-slate-500" />
+                  )}
+                  <span className="text-xs font-bold text-slate-600 dark:text-slate-300 hidden sm:inline">{user.name || user.email}</span>
+                </div>
+                <button
+                  onClick={signOut}
+                  className="p-2 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-rose-100 dark:hover:bg-rose-900/30 text-slate-400 hover:text-rose-500 transition-all"
+                  title="Sign out"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={signInWithGoogle}
+                className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all"
+                title="Sign in"
+              >
+                <LogIn className="w-4 h-4 text-slate-500" />
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 hidden sm:inline">Sign in</span>
+              </button>
+            )
+          )}
           <div className="relative flex">
             <button
               onClick={() => setAboutOpen((v) => !v)}
@@ -1871,33 +1927,6 @@ const App = () => {
 Record your wealth. Stocks use real market data from Yahoo Finance.
                   </p>
                   <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-700">
-                    {user ? (
-                      <button
-                        onClick={() => { signOut(); setAboutOpen(false); }}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
-                      >
-                        {user.avatar ? (
-                          <img src={user.avatar} alt="" className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />
-                        ) : (
-                          <LogOut className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-                        )}
-                        <div>
-                          <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Sign out</p>
-                          <p className="text-[10px] text-slate-400 text-left">{user.name || user.email}</p>
-                        </div>
-                      </button>
-                    ) : supabase ? (
-                      <button
-                        onClick={() => { signInWithGoogle(); setAboutOpen(false); }}
-                        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
-                      >
-                        <LogIn className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-                        <div>
-                          <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Sign in</p>
-                          <p className="text-[10px] text-slate-400 text-left">Sync your portfolio</p>
-                        </div>
-                      </button>
-                    ) : null}
                     <button
                       onClick={() => { toggleDark(); setAboutOpen(false); }}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
@@ -1962,12 +1991,12 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
 
           {/* ── Sidebar ──────────────────────────────────────────────────── */}
-          {sidebarOpen && (
+          {sidebarOpen && transactions.length > 0 && (
           <aside className="lg:col-span-4 space-y-4">
 
             {/* Overview */}
             {(selectedTickers.length > 0 || hasCashTx) && (
-            <div className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 space-y-4">
+            <div ref={overviewRef} className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 space-y-4">
               <button onClick={() => setOverviewOpen(v => !v)} className="w-full flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
                   <BarChart3 className="w-4 h-4" /> Overview
@@ -2064,14 +2093,14 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
 
             {/* History */}
             {(selectedTickers.length > 0 || hasCashTx) && (
-            <div className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 space-y-4">
-              <button onClick={() => setHistoryOpen(v => !v)} className="w-full flex items-center justify-between">
+            <div className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col" style={historyOpen ? { height: sidebarOpen && statsOpen && statsHeight > 0 ? statsHeight : undefined, maxHeight: statsOpenHeightRef.current > 0 ? statsOpenHeightRef.current : '60vh', overflow: 'hidden' } : undefined}>
+              <button onClick={() => setHistoryOpen(v => !v)} className={`w-full flex items-center justify-between ${historyOpen ? 'mb-4' : ''}`}>
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
                   <History className="w-4 h-4" /> History
                 </h3>
                 <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${historyOpen ? 'rotate-90' : ''}`} />
               </button>
-              {historyOpen && <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
+              {historyOpen && <div className="space-y-4 flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
                 {selectedTickers.map((ticker) => {
                   const asset = selectedAssets[ticker];
                   const txs = txByTicker[ticker] || [];
@@ -2170,10 +2199,46 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
           )}
 
           {/* ── Main ─────────────────────────────────────────────────────── */}
-          <main className={`${sidebarOpen ? 'lg:col-span-8' : 'lg:col-span-12'} space-y-4`}>
+          <main className={`${sidebarOpen && transactions.length > 0 ? 'lg:col-span-8' : 'lg:col-span-12'} space-y-4`}>
+
+
+            {/* Welcome screen */}
+            {transactions.length === 0 && (
+              <div className="flex flex-col items-center justify-center py-16 sm:py-24 md:py-32 text-center">
+                <div className="bg-blue-600 p-4 rounded-2xl shadow-lg shadow-blue-200 dark:shadow-blue-900/40 mb-6">
+                  <BarChart3 className="text-white w-10 h-10" />
+                </div>
+                <h2 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-800 dark:text-slate-100 uppercase mb-3">
+                  What I Have
+                </h2>
+                <p className="text-sm sm:text-base text-slate-500 dark:text-slate-400 max-w-md leading-relaxed mb-8">
+                  Track your wealth in one place. Record stock purchases, bank deposits, and watch your net worth grow with real market data.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-lg w-full mb-8">
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700">
+                    <ShoppingCart className="w-5 h-5 text-emerald-500 mx-auto mb-2" />
+                    <p className="text-xs font-bold text-slate-600 dark:text-slate-300">Buy stocks</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Real prices from Yahoo Finance</p>
+                  </div>
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700">
+                    <Landmark className="w-5 h-5 text-indigo-500 mx-auto mb-2" />
+                    <p className="text-xs font-bold text-slate-600 dark:text-slate-300">Track savings</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Deposits & withdrawals</p>
+                  </div>
+                  <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700">
+                    <BarChart3 className="w-5 h-5 text-blue-500 mx-auto mb-2" />
+                    <p className="text-xs font-bold text-slate-600 dark:text-slate-300">See your net worth</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">Charts, stats & insights</p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 dark:text-slate-500">
+                  Hit <span className="font-bold text-blue-500">New Transaction</span> above to get started, or import a CSV from the <span className="font-bold text-slate-500 dark:text-slate-400">menu</span>.
+                </p>
+              </div>
+            )}
 
             {/* Chart */}
-            {transactions.length > 0 && <div ref={chartRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 ${chartsOpen ? 'md:p-8' : ''} rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 ${chartsOpen ? 'h-[380px] sm:h-[450px] md:h-[550px]' : ''} flex flex-col overflow-hidden relative`}>
+            {transactions.length > 0 && <div ref={chartRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 ${chartsOpen ? 'md:p-8' : ''} rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 ${chartsOpen && !(sidebarOpen && overviewOpen && overviewHeight > 0) ? 'h-[380px] sm:h-[450px] md:h-[550px]' : ''} flex flex-col overflow-hidden relative`} style={chartsOpen && sidebarOpen && overviewOpen && overviewHeight > 0 ? { height: overviewHeight } : undefined}>
               <button onClick={() => setChartsOpen(v => !v)} className="w-full flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
                   <BarChart3 className="w-4 h-4" /> Graphs
@@ -2374,7 +2439,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
                         <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', color: dark ? '#94a3b8' : undefined }} onClick={handleLegendClick} />
                         {nwTickers.length > 1 && (
-                          <Line type="monotone" dataKey="Total Portfolio" stroke={dark ? '#e2e8f0' : '#0f172a'} strokeWidth={3} dot={false} hide={hiddenSeries.has('Total Portfolio')} />
+                          <Line type="monotone" dataKey="Total Portfolio" stroke={dark ? '#e2e8f0' : '#3b82f6'} strokeWidth={2} dot={false} hide={hiddenSeries.has('Total Portfolio')} />
                         )}
                         {nwTickers.map((ticker) => {
                           const isCash = ticker === CASH_TICKER;
@@ -2387,7 +2452,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                               dataKey={ticker}
                               name={isCash ? 'Bank Account' : `${asset.name} (${ticker})`}
                               stroke={asset.color}
-                              strokeWidth={nwTickers.length > 1 ? 2 : 3}
+                              strokeWidth={1.5}
                               strokeDasharray={nwTickers.length > 1 ? '4 4' : undefined}
                               dot={false}
                               hide={hiddenSeries.has(ticker)}
@@ -2442,7 +2507,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           formatter={(v) => isPct ? [`${v >= 0 ? '+' : ''}${v.toFixed(2)}%`] : [`${v >= 0 ? '+' : ''}${formatCurrency(v)}`]}
                           labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
                         <ReferenceLine y={0} stroke={dark ? '#475569' : '#cbd5e1'} strokeWidth={1} />
-                        <Area type="monotone" dataKey={dataKey} stroke="#3b82f6" strokeWidth={2} dot={false} fill="none" />
+                        <Area type="monotone" dataKey={dataKey} stroke="#3b82f6" strokeWidth={1.5} dot={false} fill="none" />
                       </AreaChart>
                     </ResponsiveContainer>
                   );
@@ -2478,7 +2543,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                               dataKey={ticker}
                               name={`${asset.name} (${ticker})`}
                               stroke={asset.color}
-                              strokeWidth={2}
+                              strokeWidth={1.5}
                               dot={false}
                               hide={hiddenSeries.has(ticker)}
                             />
@@ -2632,8 +2697,8 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           formatter={(v) => [formatCurrency(v)]}
                           labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
                         <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', color: dark ? '#94a3b8' : undefined }} />
-                        <Area type="monotone" dataKey="Portfolio Value" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} strokeWidth={2} dot={false} />
-                        <Area type="stepAfter" dataKey="Net Invested" stroke="#94a3b8" fill="#94a3b8" fillOpacity={0.08} strokeWidth={2} strokeDasharray="5 5" dot={false} />
+                        <Area type="monotone" dataKey="Portfolio Value" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} strokeWidth={1.5} dot={false} />
+                        <Area type="stepAfter" dataKey="Net Invested" stroke="#94a3b8" fill="#94a3b8" fillOpacity={0.08} strokeWidth={1.5} strokeDasharray="5 5" dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
                   );
@@ -2701,7 +2766,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
                           formatter={(v) => [formatCurrency(v), 'Bank Balance']}
                           labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
-                        <Area type="stepAfter" dataKey={CASH_TICKER} name="Bank Balance" stroke={bankColor} fill={bankColor} fillOpacity={0.12} strokeWidth={2.5} dot={false} />
+                        <Area type="stepAfter" dataKey={CASH_TICKER} name="Bank Balance" stroke={bankColor} fill={bankColor} fillOpacity={0.12} strokeWidth={1.5} dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
                   );
@@ -2747,7 +2812,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
                           formatter={(v) => [`${getCurrencySymbol(assetCurrencies[ticker] || 'USD')}${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Price']}
                           labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })} />
-                        <Area type="monotone" dataKey="price" stroke={asset?.color || '#3b82f6'} strokeWidth={2} fill={asset?.color || '#3b82f6'} fillOpacity={0.1} dot={false} />
+                        <Area type="monotone" dataKey="price" stroke={asset?.color || '#3b82f6'} strokeWidth={1.5} fill={asset?.color || '#3b82f6'} fillOpacity={0.1} dot={false} />
                         {showMarkers && tickerTxMarkers.map((m) => (
                           <ReferenceDot
                             key={`price-${m.id}`}
@@ -2772,6 +2837,22 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
             {convertedStats.length > 0 && (() => {
               const portfolio = convertedStats.find((s) => s.isPortfolio);
               const assets = convertedStats.filter((s) => !s.isPortfolio);
+              // Compute YTD % for all tickers + portfolio
+              const ytdMap = {};
+              if (convertedChartData.length > 0) {
+                const yearStart = `${new Date().getFullYear()}-01-01`;
+                const startEntry = convertedChartData.find(p => p.date >= yearStart);
+                if (startEntry) {
+                  const lastEntry = convertedChartData[convertedChartData.length - 1];
+                  for (const key of Object.keys(startEntry)) {
+                    if (key === 'date') continue;
+                    const sv = startEntry[key] ?? 0;
+                    const ev = lastEntry[key] ?? 0;
+                    if (sv > 0) ytdMap[key] = (ev - sv) / sv;
+                  }
+                }
+              }
+              const portfolioYtd = ytdMap['Total Portfolio'] ?? null;
               return (
                 <div ref={statsRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 ${statsOpen ? 'md:p-8' : ''} rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700`}>
                   <button onClick={() => setStatsOpen(v => !v)} className="w-full flex items-center justify-between">
@@ -2782,53 +2863,57 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   </button>
                   {statsOpen && <div className="space-y-6 mt-4">
                   {portfolio && (
-                    <div className="p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-slate-900 text-white border-slate-800 shadow-2xl transition-all hover:translate-y-[-4px]">
+                    <div className="p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white border-slate-200 dark:border-slate-800 shadow-sm dark:shadow-2xl transition-all hover:translate-y-[-4px]">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
-                          <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-blue-600 w-fit mb-2">Combined</div>
+                          <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-blue-600 text-white w-fit mb-2">Combined</div>
                           <p className="text-2xl sm:text-3xl font-black tracking-tight">{formatCurrency(portfolio.finalValue)}</p>
-                          <p className="text-xs font-bold text-slate-400 mt-1">Total Portfolio</p>
+                          <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1">Total Portfolio</p>
                         </div>
-                        <div className="flex gap-4 sm:gap-6">
+                        {portfolioYtd != null && (
                           <div className="text-center">
-                            <p className={`text-xl font-black ${(portfolio.finalValue + portfolio.totalWithdrawals - portfolio.totalDeposits) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {(portfolio.finalValue + portfolio.totalWithdrawals - portfolio.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(portfolio.finalValue + portfolio.totalWithdrawals - portfolio.totalDeposits)}
+                            <p className={`text-xl font-black ${portfolioYtd >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                              {portfolioYtd >= 0 ? '+' : ''}{formatPercent(portfolioYtd)}
                             </p>
-                            <p className="text-[10px] font-bold text-slate-500 uppercase">Return</p>
+                            <p className="text-[10px] font-bold text-slate-500 uppercase">YTD</p>
                           </div>
-                          <div className="text-center">
-                            <p className="text-xl font-black text-slate-300">{formatPercent(portfolio.annualizedReturn)}</p>
-                            <p className="text-[10px] font-bold text-slate-500 uppercase">Ann.</p>
-                          </div>
-                        </div>
+                        )}
                       </div>
                     </div>
                   )}
                   {assets.length > 0 && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {assets.map((stat, idx) => (
-                        <div key={idx} className={`p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-white dark:bg-slate-800 border-slate-200 shadow-sm transition-all hover:translate-y-[-4px] ${hiddenAssets.has(stat.ticker) ? 'opacity-50' : ''}`}>
-                          <div className="flex justify-between items-start mb-4">
-                            <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400">
+                      {assets.map((stat, idx) => {
+                        const isCash = stat.ticker === CASH_TICKER;
+                        const ytdPct = ytdMap[stat.ticker] ?? null;
+                        return (
+                        <div key={idx} className={`p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm transition-all hover:translate-y-[-4px] ${hiddenAssets.has(stat.ticker) ? 'opacity-50' : ''}`}>
+                          <div className="flex justify-between items-center mb-4 gap-2">
+                            <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 truncate min-w-0">
                             {displayTicker(stat.ticker)}
                             </div>
-                            <div className={`flex items-center gap-1 text-xs font-black ${(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
-                              {stat.totalDeposits > 0 ? formatPercent((stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) / stat.totalDeposits) : '—'}
-                            </div>
+                            {ytdPct != null ? (
+                              <div className={`flex items-center gap-1 text-xs font-black shrink-0 whitespace-nowrap ${ytdPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                                {ytdPct >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+                                {formatPercent(Math.abs(ytdPct))} YTD
+                              </div>
+                            ) : null}
                           </div>
                           <h4 className="text-xs font-bold mb-1 truncate text-slate-500 dark:text-slate-400">
-                            {stat.name} · {formatCurrency(stat.totalDeposits)}
+                            {isCash ? 'Bank Account' : `${stat.name} · ${formatCurrency(stat.totalDeposits)}`}
                           </h4>
                           <p className="text-2xl font-black tracking-tight">{formatCurrency(stat.finalValue)}</p>
-                          <div className="mt-2 flex flex-wrap gap-3 text-[10px] font-bold">
-                            {stat.ticker !== CASH_TICKER && currentShares[stat.ticker] != null && (
-                              <span className="text-blue-500 dark:text-blue-400">{currentShares[stat.ticker] < 1 ? currentShares[stat.ticker].toFixed(4) : currentShares[stat.ticker].toFixed(2)} shares</span>
-                            )}
-                            <span className="text-slate-400">Ann. {formatPercent(stat.annualizedReturn)}</span>
-                          </div>
+                          {!isCash && (
+                            <div className="mt-2 flex flex-wrap gap-3 text-[10px] font-bold">
+                              {currentShares[stat.ticker] != null && (
+                                <span className="text-blue-500 dark:text-blue-400">{currentShares[stat.ticker] < 1 ? currentShares[stat.ticker].toFixed(4) : currentShares[stat.ticker].toFixed(2)} shares</span>
+                              )}
+                              <span className="text-slate-500 dark:text-slate-400">Ann. {formatPercent(stat.annualizedReturn)}</span>
+                            </div>
+                          )}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>}
@@ -2896,15 +2981,15 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   {convertedStats.find((s) => s.isPortfolio) && (() => {
                     const p = convertedStats.find((s) => s.isPortfolio);
                     return (
-                      <tr className="bg-slate-900 text-white border-t border-slate-800">
+                      <tr className="bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white border-t border-slate-200 dark:border-slate-800">
                         <td className="px-4 sm:px-8 py-6 sm:py-10 font-black rounded-bl-2xl sm:rounded-bl-[2.5rem]">Portfolio Total</td>
                         <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-bold"></td>
                         <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-bold">{formatCurrency(p.totalDeposits)}</td>
                         <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-bold">{formatCurrency(p.totalWithdrawals)}</td>
-                        <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-black text-blue-400 text-lg">{formatCurrency(p.finalValue)}</td>
-                        <td className={`px-4 sm:px-8 py-6 sm:py-10 text-right font-black text-lg ${(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-black text-blue-600 dark:text-blue-400 text-lg">{formatCurrency(p.finalValue)}</td>
+                        <td className={`px-4 sm:px-8 py-6 sm:py-10 text-right font-black text-lg ${(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
                           {(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(p.finalValue + p.totalWithdrawals - p.totalDeposits)}
-                          <span className="text-xs font-normal text-slate-400 ml-1">({(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatPercent((p.finalValue + p.totalWithdrawals - p.totalDeposits) / p.totalDeposits)})</span>
+                          <span className="text-xs font-normal text-slate-500 dark:text-slate-400 ml-1">({(p.finalValue + p.totalWithdrawals - p.totalDeposits) >= 0 ? '+' : ''}{formatPercent((p.finalValue + p.totalWithdrawals - p.totalDeposits) / p.totalDeposits)})</span>
                         </td>
                         <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-bold rounded-br-2xl sm:rounded-br-[2.5rem]">{formatPercent(p.annualizedReturn)}</td>
                       </tr>

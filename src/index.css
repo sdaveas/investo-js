@@ -1,3 +1,8 @@
 @import 'tailwindcss';
 
 @custom-variant dark (&:where(.dark, .dark *));
+
+@keyframes pulse-ring {
+  0%, 100% { box-shadow: 0 0 0 3px transparent; }
+  50% { box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.6); }
+}
