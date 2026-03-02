@@ -18,7 +18,9 @@ export async function searchTickers(query, maxResults = 6) {
 
 export async function fetchPrices(assetDateRanges) {
   // assetDateRanges: { [ticker]: { startDate, endDate } }
-  const results = {};
+  // Returns { prices: { [ticker]: [{date,price}] }, currencies: { [ticker]: string } }
+  const prices = {};
+  const currencies = {};
 
   await Promise.all(
     Object.entries(assetDateRanges).map(async ([ticker, { startDate, endDate }]) => {
@@ -32,13 +34,18 @@ export async function fetchPrices(assetDateRanges) {
         const result = data.chart?.result?.[0];
         if (!result?.timestamp) return;
 
+        // Capture the asset's native currency from Yahoo Finance metadata
+        if (result.meta?.currency) {
+          currencies[ticker] = result.meta.currency.toUpperCase();
+        }
+
         const timestamps = result.timestamp;
         const closes =
           result.indicators?.adjclose?.[0]?.adjclose ||
           result.indicators?.quote?.[0]?.close ||
           [];
 
-        results[ticker] = timestamps
+        prices[ticker] = timestamps
           .map((ts, i) => ({
             date: new Date(ts * 1000).toISOString().split('T')[0],
             price: closes[i],
@@ -50,11 +57,37 @@ export async function fetchPrices(assetDateRanges) {
     })
   );
 
-  return results;
+  return { prices, currencies };
+}
+
+export async function fetchExchangeRates(startDate, endDate) {
+  // Fetches EUR→USD daily exchange rates using the EURUSD=X ticker
+  // Returns [{ date, rate }] where rate is how many USD per 1 EUR
+  try {
+    const period1 = Math.floor(new Date(startDate).getTime() / 1000);
+    const period2 = Math.floor(new Date(endDate).getTime() / 1000);
+    const url = `/api/chart/v8/finance/chart/EURUSD%3DX?period1=${period1}&period2=${period2}&interval=1d`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = await res.json();
+    const result = data.chart?.result?.[0];
+    if (!result?.timestamp) return [];
+    const timestamps = result.timestamp;
+    const closes = result.indicators?.quote?.[0]?.close || [];
+    return timestamps
+      .map((ts, i) => ({
+        date: new Date(ts * 1000).toISOString().split('T')[0],
+        rate: closes[i],
+      }))
+      .filter((d) => d.rate != null);
+  } catch {
+    return [];
+  }
 }
 
 export async function fetchIntradayPrices(ticker, date) {
   // Fetch hourly prices for a specific trading day
+  // Returns { prices: [...], currency: string } or null
   const dayStart = Math.floor(new Date(date + 'T00:00:00').getTime() / 1000);
   const dayEnd = dayStart + 86400; // +1 day
   const url = `/api/chart/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${dayStart}&period2=${dayEnd}&interval=1h&includePrePost=true`;
@@ -67,7 +100,8 @@ export async function fetchIntradayPrices(ticker, date) {
     const timestamps = result.timestamp;
     const quotes = result.indicators?.quote?.[0];
     if (!quotes) return null;
-    return timestamps
+    const currency = result.meta?.currency?.toUpperCase() || null;
+    const prices = timestamps
       .map((ts, i) => ({
         time: new Date(ts * 1000),
         hour: new Date(ts * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
@@ -77,6 +111,7 @@ export async function fetchIntradayPrices(ticker, date) {
         low: quotes.low?.[i],
       }))
       .filter((d) => d.price != null);
+    return { prices, currency };
   } catch {
     return null;
   }

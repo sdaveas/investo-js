@@ -85,6 +85,7 @@ export function simulate(priceData, transactions) {
         if (price != null) {
           const value = units > 0 ? price * units : 0;
           point[ticker] = Math.round(value * 100) / 100;
+          point[ticker + '_units'] = Math.round(units * 10000) / 10000;
           total += value;
         }
       });

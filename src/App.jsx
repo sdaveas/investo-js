@@ -17,7 +17,7 @@ import {
   Landmark, Eye, EyeOff,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
-import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices } from './api';
+import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices, fetchExchangeRates } from './api';
 import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
 import { Analytics } from '@vercel/analytics/react';
@@ -27,19 +27,23 @@ const COLORS = [
   '#ef4444', '#06b6d4', '#ec4899', '#84cc16',
 ];
 
-const formatCurrencyFn = new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: 'USD', maximumFractionDigits: 0,
-});
-const formatCurrency = (val) => formatCurrencyFn.format(val);
+const currencyFormatters = {
+  USD: new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }),
+  EUR: new Intl.NumberFormat('en-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }),
+};
+const getCurrencySymbol = (c) => c === 'EUR' ? '€' : '$';
+let _displayCurrency = 'USD';
+const formatCurrency = (val) => (currencyFormatters[_displayCurrency] || currencyFormatters.USD).format(val);
 
 const formatPercent = (val) => `${(val * 100).toFixed(1)}%`;
 
 const formatShort = (val) => {
   const abs = Math.abs(val);
   const sign = val < 0 ? '-' : '';
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(0)}k`;
-  return `${sign}$${abs.toFixed(0)}`;
+  const sym = getCurrencySymbol(_displayCurrency);
+  if (abs >= 1_000_000) return `${sign}${sym}${(abs / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${sign}${sym}${(abs / 1_000).toFixed(0)}k`;
+  return `${sign}${sym}${abs.toFixed(0)}`;
 };
 
 const formatShortDate = (d) =>
@@ -245,16 +249,23 @@ const IntradayPricePicker = ({ ticker, date, price, onPriceChange, accentColor =
   const [intradayData, setIntradayData] = useState(null); // null = not fetched, [] = no data
   const [loading, setLoading] = useState(false);
   const [hoveredIdx, setHoveredIdx] = useState(null);
+  const [priceCurrency, setPriceCurrency] = useState(null); // native currency of the asset's price
   const chartRef = useRef(null);
 
   const ringClass = `focus:ring-${accentColor}-500`;
+  const priceSymbol = getCurrencySymbol(priceCurrency || _displayCurrency);
 
   // Fetch intraday data when expanded and ticker+date are available
   useEffect(() => {
     if (!expanded || !ticker || !date) return;
     setLoading(true);
-    fetchIntradayPrices(ticker, date).then((data) => {
-      setIntradayData(data || []);
+    fetchIntradayPrices(ticker, date).then((result) => {
+      if (result) {
+        setIntradayData(result.prices || []);
+        if (result.currency) setPriceCurrency(result.currency);
+      } else {
+        setIntradayData([]);
+      }
       setLoading(false);
     }).catch(() => {
       setIntradayData([]);
@@ -279,7 +290,7 @@ const IntradayPricePicker = ({ ticker, date, price, onPriceChange, accentColor =
         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Price per Unit</label>
         <div className="flex items-center gap-2">
           <button onClick={() => { setExpanded(true); setIntradayData(null); }} className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 text-left hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors">
-            <DollarSign className="w-3 h-3 inline -mt-0.5 mr-0.5 text-slate-400" />{Number(price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <span className="text-slate-400">{priceSymbol}</span>{Number(price).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </button>
           <button onClick={() => { onPriceChange(null); setExpanded(false); }} className="p-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-400 hover:text-slate-600 hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors" title="Use closing price">
             <X className="w-3.5 h-3.5" />
@@ -327,7 +338,7 @@ const IntradayPricePicker = ({ ticker, date, price, onPriceChange, accentColor =
               <span>{intradayData[0].hour}</span>
               {hoveredIdx != null && (
                 <span className="text-slate-600 dark:text-slate-200 font-black">
-                  {intradayData[hoveredIdx].hour} — ${intradayData[hoveredIdx].price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {intradayData[hoveredIdx].hour} — {priceSymbol}{intradayData[hoveredIdx].price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
               )}
               <span>{intradayData[intradayData.length - 1].hour}</span>
@@ -361,7 +372,7 @@ const IntradayPricePicker = ({ ticker, date, price, onPriceChange, accentColor =
           <>
             <p className="text-[10px] font-bold text-slate-400 text-center py-1">No intraday data available for this date</p>
             <div className="relative">
-              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">{priceSymbol}</span>
               <input type="number" value={price ?? ''} onChange={(e) => onPriceChange(e.target.value === '' ? null : Math.max(0, Number(e.target.value)))}
                 placeholder="Enter price manually" autoFocus
                 className={`w-full bg-white dark:bg-slate-800 border-none rounded-xl py-2.5 pl-8 pr-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 ${ringClass} outline-none`} />
@@ -426,6 +437,20 @@ const App = () => {
     try { return localStorage.getItem('investo-dark') === 'true'; } catch { return false; }
   });
 
+  // --- Currency ---
+  const [displayCurrency, setDisplayCurrency] = useState(() => {
+    try { return savedPortfolio?.displayCurrency || localStorage.getItem('investo-currency') || 'USD'; } catch { return 'USD'; }
+  });
+  const [assetCurrencies, setAssetCurrencies] = useState({});  // { ticker: 'USD' | 'EUR' | ... }
+  const [exchangeRates, setExchangeRates] = useState([]);      // [{ date, rate }] — EURUSD rate per day
+  const exchangeRateMap = useMemo(() => {
+    const m = new Map();
+    exchangeRates.forEach((e) => m.set(e.date, e.rate));
+    return m;
+  }, [exchangeRates]);
+  // Keep the module-level formatter in sync
+  _displayCurrency = displayCurrency;
+
   // --- Modal ---
   const [modalMode, setModalMode] = useState(null);           // 'buy' | 'sell' | 'deposit' | 'withdraw' | 'edit' | 'import' | 'insights' | null
   const [stagedAsset, setStagedAsset] = useState(null);       // { symbol, name } — buy step 2
@@ -433,6 +458,8 @@ const App = () => {
   const [modalAmount, setModalAmount] = useState(DEFAULT_AMOUNT);
   const [modalDate, setModalDate] = useState(fiveYearsAgo.toISOString().split('T')[0]);
   const [modalPrice, setModalPrice] = useState(null);          // null = closing price, number = custom
+  const [modalInputMode, setModalInputMode] = useState('amount'); // 'amount' | 'shares'
+  const [modalShares, setModalShares] = useState('');
   const [editingTx, setEditingTx] = useState(null);           // tx being edited
   const [importText, setImportText] = useState('');
   const [quickAddText, setQuickAddText] = useState('');
@@ -504,6 +531,8 @@ const App = () => {
 
   // Tickers that still have a positive balance (market value > 0)
   const ownedTickers = useMemo(() => {
+    // NOTE: we intentionally use raw `chartData` here to avoid referencing
+    // `convertedChartData` before it is initialized (conversion layer is defined later).
     const lastPoint = chartData[chartData.length - 1];
     return selectedTickers.filter((t) => {
       if (lastPoint && lastPoint[t] != null) return lastPoint[t] > 0;
@@ -549,6 +578,8 @@ const App = () => {
     setModalAmount(DEFAULT_AMOUNT);
     setModalDate(TODAY);
     setModalPrice(null);
+    setModalInputMode('amount');
+    setModalShares('');
     setStagedAsset(null);
     setModalMode('buy');
   }, [transactions]);
@@ -557,6 +588,8 @@ const App = () => {
     setModalAmount(DEFAULT_AMOUNT);
     setModalDate(TODAY);
     setModalPrice(null);
+    setModalInputMode('amount');
+    setModalShares('');
     setSellTicker(preselectedTicker);
     setModalMode('sell');
   }, []);
@@ -579,6 +612,8 @@ const App = () => {
     setModalAmount(DEFAULT_AMOUNT);
     setModalDate(TODAY);
     setModalPrice(null);
+    setModalInputMode('amount');
+    setModalShares('');
     setStagedAsset({ symbol: ticker, name: asset.name });
     setModalMode('buy');
   }, [selectedAssets, transactions]);
@@ -640,20 +675,20 @@ const App = () => {
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
       ? modalAmount 
       : DEFAULT_AMOUNT;
-    const tx = { id: nextTxId++, ticker, type: 'buy', amount: validAmount, date: modalDate };
+    const tx = { id: nextTxId++, ticker, type: 'buy', amount: validAmount, date: modalDate, currency: displayCurrency };
     if (modalPrice) tx.price = modalPrice;
     setTransactions((prev) => [...prev, tx]);
-  }, [modalAmount, modalDate, modalPrice, selectedAssets]);
+  }, [modalAmount, modalDate, modalPrice, selectedAssets, displayCurrency]);
 
   const addSell = useCallback((ticker) => {
     // Ensure amount is a valid number
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
       ? modalAmount 
       : DEFAULT_AMOUNT;
-    const tx = { id: nextTxId++, ticker, type: 'sell', amount: validAmount, date: modalDate };
+    const tx = { id: nextTxId++, ticker, type: 'sell', amount: validAmount, date: modalDate, currency: displayCurrency };
     if (modalPrice) tx.price = modalPrice;
     setTransactions((prev) => [...prev, tx]);
-  }, [modalAmount, modalDate, modalPrice]);
+  }, [modalAmount, modalDate, modalPrice, displayCurrency]);
 
   const addCashTx = useCallback((type) => {
     if (!selectedAssets[CASH_TICKER]) {
@@ -662,9 +697,9 @@ const App = () => {
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0)
       ? modalAmount
       : DEFAULT_AMOUNT;
-    const tx = { id: nextTxId++, ticker: CASH_TICKER, type, amount: validAmount, date: modalDate };
+    const tx = { id: nextTxId++, ticker: CASH_TICKER, type, amount: validAmount, date: modalDate, currency: displayCurrency };
     setTransactions((prev) => [...prev, tx]);
-  }, [modalAmount, modalDate, selectedAssets]);
+  }, [modalAmount, modalDate, selectedAssets, displayCurrency]);
 
   // ─── Quick Add (AI)
 
@@ -682,7 +717,7 @@ const App = () => {
       try {
         // Handle bank transactions directly
         if (parsed.asset === '_BANK') {
-          const resolved = { ticker: CASH_TICKER, name: 'Bank Account', type: parsed.type, amount: parsed.amount || DEFAULT_AMOUNT, date: parsed.date || TODAY };
+          const resolved = { ticker: CASH_TICKER, name: 'Bank Account', type: parsed.type, amount: parsed.amount || DEFAULT_AMOUNT, date: parsed.date || TODAY, currency: displayCurrency };
           if (quickAddVerify) {
             setQuickAddPreview(resolved);
             setQuickAddStatus(null);
@@ -732,7 +767,7 @@ const App = () => {
           const available = entry?.[ticker] ?? 0;
           if (available > 0) txAmount = parsed.sellFraction ? Math.round(available * parsed.sellFraction) : available;
         }
-        const resolved = { ticker, name: matchName, type: parsed.type, amount: txAmount, date: parsed.date || TODAY };
+        const resolved = { ticker, name: matchName, type: parsed.type, amount: txAmount, date: parsed.date || TODAY, currency: displayCurrency };
         if (quickAddVerify) {
           setQuickAddPreview(resolved);
           setQuickAddStatus(null);
@@ -850,6 +885,7 @@ const App = () => {
         type: parsed.type,
         amount: txAmount,
         date: parsed.date || TODAY,
+        currency: displayCurrency,
       };
 
       if (quickAddVerify) {
@@ -870,17 +906,17 @@ const App = () => {
       setQuickAddStatus(`error:${error.message || 'Could not understand. Please try again.'}`);
       setTimeout(() => setQuickAddStatus(null), 3000);
     }
-  }, [quickAddText, selectedAssets, chartData, quickAddVerify, supabase]);
+  }, [quickAddText, selectedAssets, chartData, quickAddVerify, supabase, displayCurrency]);
 
   const confirmQuickAdd = useCallback(() => {
     if (!quickAddPreview) return;
-    const { ticker, name, type, amount, date } = quickAddPreview;
+    const { ticker, name, type, amount, date, currency } = quickAddPreview;
     if (!selectedAssets[ticker]) {
       const color = COLORS[colorIdx.current % COLORS.length];
       colorIdx.current++;
       setSelectedAssets((prev) => ({ ...prev, [ticker]: { name, color } }));
     }
-    setTransactions((prev) => [...prev, { id: nextTxId++, ticker, type, amount, date }]);
+    setTransactions((prev) => [...prev, { id: nextTxId++, ticker, type, amount, date, currency }]);
     setQuickAddText('');
     setQuickAddPreview(null);
   }, [quickAddPreview, selectedAssets]);
@@ -1161,6 +1197,7 @@ const App = () => {
         selectedAssets: cleanSelectedAssets,
         colorIdx: typeof colorIdx.current === 'number' ? colorIdx.current : 0,
         hiddenAssets: [...hiddenAssets],
+        displayCurrency,
       };
       
       localStorage.setItem(LS_KEY, JSON.stringify(dataToSave));
@@ -1186,7 +1223,7 @@ const App = () => {
         console.error('Fallback save also failed:', fallbackError);
       }
     }
-  }, [transactions, selectedAssets, hiddenAssets]);
+  }, [transactions, selectedAssets, hiddenAssets, displayCurrency]);
 
   // Auth state listener
   useEffect(() => {
@@ -1208,10 +1245,15 @@ const App = () => {
             setSelectedAssets(data.selected_assets || {});
             setHiddenAssets(new Set(data.hidden_assets || []));
             colorIdx.current = data.color_idx || 0;
+            if (data.display_currency) {
+              setDisplayCurrency(data.display_currency);
+              _displayCurrency = data.display_currency;
+              localStorage.setItem('investo-currency', data.display_currency);
+            }
             nextTxId = Math.max(...data.transactions.map((t) => t.id), 0) + 1;
             localStorage.setItem(LS_KEY, JSON.stringify({
               transactions: data.transactions, selectedAssets: data.selected_assets || {}, colorIdx: data.color_idx || 0,
-              hiddenAssets: data.hidden_assets || [],
+              hiddenAssets: data.hidden_assets || [], displayCurrency: data.display_currency || 'USD',
             }));
             setTimeout(() => { isHydratingRef.current = false; }, 200);
           }
@@ -1246,13 +1288,14 @@ const App = () => {
           hidden_assets: [...hiddenAssets],
           color_idx: colorIdx.current,
           dark_mode: dark,
+          display_currency: displayCurrency,
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
       } catch { /* silent */ }
       setIsSyncing(false);
     }, 1500);
     return () => { clearTimeout(t); setIsSyncing(false); };
-  }, [transactions, selectedAssets, hiddenAssets, user, dark]);
+  }, [transactions, selectedAssets, hiddenAssets, user, dark, displayCurrency]);
 
   const signInWithGoogle = useCallback(async () => {
     if (!supabase) return;
@@ -1270,9 +1313,14 @@ const App = () => {
     setPriceCache(null);
     setChartData([]);
     setStats([]);
+    setDisplayCurrency('USD');
+    _displayCurrency = 'USD';
+    setAssetCurrencies({});
+    setExchangeRates([]);
     colorIdx.current = 0;
     fetchedRangesRef.current = {};
     localStorage.removeItem(LS_KEY);
+    localStorage.removeItem('investo-currency');
     setTimeout(() => { isHydratingRef.current = false; }, 200);
   }, []);
 
@@ -1301,16 +1349,22 @@ const App = () => {
     // Only refetch if a ticker is new or the global start moved earlier
     const fetched = fetchedRangesRef.current;
     const needsFetch = tickers.some((t) => !fetched[t] || fetched[t] > globalStart);
-    // Also need to update if cash was added but no market tickers exist
-    if (!needsFetch && !(hasCash && tickers.length === 0 && !fetched[CASH_TICKER])) return;
+    // Also need to run if cash was added but not yet in the price cache
+    const needsCash = hasCash && !fetched[CASH_TICKER];
+    if (!needsFetch && !needsCash) return;
 
     let cancelled = false;
     const debounce = setTimeout(async () => {
       setIsSimulating(true);
       setFetchError(null);
       try {
-        const prices = tickers.length > 0 ? await fetchPrices(dateRanges) : {};
+        const result = needsFetch && tickers.length > 0 ? await fetchPrices(dateRanges) : { prices: {}, currencies: {} };
+        const prices = result.prices;
         if (!cancelled) {
+          // Update asset currencies from API metadata
+          if (Object.keys(result.currencies).length > 0) {
+            setAssetCurrencies((prev) => ({ ...prev, ...result.currencies }));
+          }
           tickers.forEach((t) => {
             if (prices[t]?.length > 0) fetched[t] = globalStart;
           });
@@ -1332,6 +1386,11 @@ const App = () => {
             });
             return next;
           });
+          // Always fetch exchange rates — needed for currency switching (bank + stocks)
+          try {
+            const rates = await fetchExchangeRates(fetchStart, TODAY);
+            if (!cancelled && rates.length > 0) setExchangeRates(rates);
+          } catch { /* exchange rate fetch is best-effort */ }
         }
       } catch {
         if (!cancelled) setFetchError('Failed to fetch market data.');
@@ -1366,6 +1425,23 @@ const App = () => {
     return merged;
   }, [priceCache, liveQuotes]);
 
+  // Helper: convert a transaction amount from its stored currency to the asset's native currency for simulation
+  const toNativeAmount = useCallback((tx) => {
+    if (tx.ticker === CASH_TICKER || !tx.currency) return tx;
+    const native = assetCurrencies[tx.ticker];
+    if (!native || tx.currency === native) return tx;
+    let rate = null;
+    for (const entry of exchangeRates) {
+      if (entry.date <= tx.date) rate = entry.rate;
+      else break;
+    }
+    if (rate == null) return tx;
+    let mult = 1;
+    if (tx.currency === 'EUR' && native === 'USD') mult = rate;
+    else if (tx.currency === 'USD' && native === 'EUR') mult = 1 / rate;
+    return { ...tx, amount: tx.amount * mult };
+  }, [assetCurrencies, exchangeRates]);
+
   // ─── Recompute chart ──────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -1378,7 +1454,9 @@ const App = () => {
     const activeTx = visibleTransactions.filter((tx) => livePriceCache[tx.ticker]?.length > 0);
     if (activeTx.length === 0) { setChartData([]); setStats([]); return; }
 
-    const data = simulate(livePriceCache, activeTx);
+    // Convert amounts from stored currency to asset's native currency for correct simulation
+    const nativeActiveTx = activeTx.map(toNativeAmount);
+    const data = simulate(livePriceCache, nativeActiveTx);
     setChartData(data);
 
     // Compute stats for visible transactions (for correct Combined total)
@@ -1389,19 +1467,193 @@ const App = () => {
     const colors = Object.fromEntries(
       Object.entries(selectedAssets).map(([t, a]) => [t, a.color]),
     );
-    const visibleStats = computeStats(data, tickers, activeTx, names, colors);
+    const visibleStats = computeStats(data, tickers, nativeActiveTx, names, colors);
 
     // Also compute stats for hidden assets to show in Stats section
     const hiddenTx = transactions.filter((tx) => hiddenAssets.has(tx.ticker) && livePriceCache[tx.ticker]?.length > 0);
     if (hiddenTx.length > 0) {
-      const hiddenData = simulate(livePriceCache, hiddenTx);
+      const nativeHiddenTx = hiddenTx.map(toNativeAmount);
+      const hiddenData = simulate(livePriceCache, nativeHiddenTx);
       const hiddenTickers = [...new Set(hiddenTx.map((tx) => tx.ticker))];
-      const hiddenStats = computeStats(hiddenData, hiddenTickers, hiddenTx, names, colors).filter((s) => !s.isPortfolio);
+      const hiddenStats = computeStats(hiddenData, hiddenTickers, nativeHiddenTx, names, colors).filter((s) => !s.isPortfolio);
       setStats([...visibleStats, ...hiddenStats]);
     } else {
       setStats(visibleStats);
     }
-  }, [livePriceCache, visibleTransactions, transactions, selectedAssets]);
+  }, [livePriceCache, visibleTransactions, transactions, selectedAssets, toNativeAmount]);
+
+  // ─── Currency conversion layer ────────────────────────────────────────────
+
+  // Determine the bank account's native currency
+  const bankCurrency = useMemo(() => {
+    // Use explicit currency from bank transactions if available
+    const cashTxs = transactions.filter(tx => tx.ticker === CASH_TICKER && tx.currency);
+    if (cashTxs.length > 0) return cashTxs[cashTxs.length - 1].currency;
+    // Infer from the most common asset currency (user's likely home currency)
+    const currencies = Object.values(assetCurrencies);
+    if (currencies.length === 0) return displayCurrency;
+    const counts = {};
+    currencies.forEach(c => { counts[c] = (counts[c] || 0) + 1; });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+  }, [transactions, assetCurrencies, displayCurrency]);
+
+  // Helper: get the exchange rate multiplier for converting a native currency to display currency on a given date
+  const getConversionRate = useCallback((nativeCurrency, date) => {
+    if (!nativeCurrency || nativeCurrency === displayCurrency) return 1;
+    // Find closest rate (forward-fill)
+    let rate = null;
+    for (const entry of exchangeRates) {
+      if (entry.date <= date) rate = entry.rate;
+      else break;
+    }
+    if (rate == null) return 1; // no rate available, show unconverted
+    // EURUSD rate = how many USD per 1 EUR
+    if (nativeCurrency === 'EUR' && displayCurrency === 'USD') return rate;
+    if (nativeCurrency === 'USD' && displayCurrency === 'EUR') return 1 / rate;
+    return 1; // unsupported pair
+  }, [displayCurrency, exchangeRates]);
+
+  // Convert a transaction amount from its stored currency to display currency
+  const convertTxAmount = useCallback((tx) => {
+    const storedCurrency = tx.currency || (tx.ticker === CASH_TICKER ? bankCurrency : assetCurrencies[tx.ticker]);
+    if (!storedCurrency || storedCurrency === displayCurrency) return tx.amount;
+    return tx.amount * getConversionRate(storedCurrency, tx.date);
+  }, [assetCurrencies, bankCurrency, displayCurrency, getConversionRate]);
+
+  const needsConversion = useMemo(() => {
+    return Object.values(assetCurrencies).some((c) => c !== displayCurrency) ||
+           bankCurrency !== displayCurrency;
+  }, [assetCurrencies, displayCurrency, bankCurrency]);
+
+  const convertedChartData = useMemo(() => {
+    if (!needsConversion || chartData.length === 0 || exchangeRates.length === 0) return chartData;
+    const tickers = [...new Set(transactions.filter((tx) => tx.ticker !== CASH_TICKER).map((tx) => tx.ticker))];
+    // Build forward-filled rate map for fast lookup
+    const rateMap = new Map();
+    let lastRate = null;
+    const allDates = chartData.map((p) => p.date);
+    let rateIdx = 0;
+    for (const date of allDates) {
+      while (rateIdx < exchangeRates.length && exchangeRates[rateIdx].date <= date) {
+        lastRate = exchangeRates[rateIdx].rate;
+        rateIdx++;
+      }
+      if (lastRate != null) rateMap.set(date, lastRate);
+    }
+    return chartData.map((point) => {
+      const converted = { date: point.date };
+      let total = 0;
+      const eurusd = rateMap.get(point.date);
+      for (const ticker of tickers) {
+        const val = point[ticker];
+        if (val == null) continue;
+        const native = assetCurrencies[ticker];
+        if (!native || native === displayCurrency || !eurusd) {
+          converted[ticker] = val;
+        } else if (native === 'EUR' && displayCurrency === 'USD') {
+          converted[ticker] = Math.round(val * eurusd * 100) / 100;
+        } else if (native === 'USD' && displayCurrency === 'EUR') {
+          converted[ticker] = Math.round(val / eurusd * 100) / 100;
+        } else {
+          converted[ticker] = val;
+        }
+        total += converted[ticker];
+      }
+      // Cash: convert if bank currency differs from display currency
+      if (point[CASH_TICKER] != null) {
+        if (bankCurrency && bankCurrency !== displayCurrency && eurusd) {
+          if (bankCurrency === 'EUR' && displayCurrency === 'USD') {
+            converted[CASH_TICKER] = Math.round(point[CASH_TICKER] * eurusd * 100) / 100;
+          } else if (bankCurrency === 'USD' && displayCurrency === 'EUR') {
+            converted[CASH_TICKER] = Math.round(point[CASH_TICKER] / eurusd * 100) / 100;
+          } else {
+            converted[CASH_TICKER] = point[CASH_TICKER];
+          }
+        } else {
+          converted[CASH_TICKER] = point[CASH_TICKER];
+        }
+        total += converted[CASH_TICKER];
+      }
+      if (point['Total Portfolio'] != null) {
+        converted['Total Portfolio'] = Math.round(total * 100) / 100;
+      }
+      return converted;
+    });
+  }, [chartData, needsConversion, exchangeRates, assetCurrencies, displayCurrency, transactions, bankCurrency]);
+
+  // Converted stats use convertedChartData
+  const convertedStats = useMemo(() => {
+    if (!needsConversion || convertedChartData.length === 0) return stats;
+    // Recompute stats on converted data
+    const activeTx = visibleTransactions.filter((tx) => livePriceCache?.[tx.ticker]?.length > 0);
+    if (activeTx.length === 0) return stats;
+    const tickers = [...new Set(activeTx.map((tx) => tx.ticker))];
+    const names = Object.fromEntries(Object.entries(selectedAssets).map(([t, a]) => [t, a.name]));
+    const colors = Object.fromEntries(Object.entries(selectedAssets).map(([t, a]) => [t, a.color]));
+    // Convert transaction amounts to display currency for stats
+    const convertedTx = activeTx.map((tx) => ({ ...tx, amount: convertTxAmount(tx) }));
+    const visibleStats = computeStats(convertedChartData, tickers, convertedTx, names, colors);
+    // Also compute hidden asset stats
+    const hiddenTx = transactions.filter((tx) => hiddenAssets.has(tx.ticker) && livePriceCache?.[tx.ticker]?.length > 0);
+    if (hiddenTx.length > 0) {
+      // Build converted hidden chart data
+      const nativeHiddenTx = hiddenTx.map(toNativeAmount);
+      const hiddenRaw = simulate(livePriceCache, nativeHiddenTx);
+      const hiddenConverted = !needsConversion ? hiddenRaw : hiddenRaw.map((point) => {
+        const cp = { date: point.date };
+        for (const key of Object.keys(point)) {
+          if (key === 'date') continue;
+          const native = key === CASH_TICKER ? bankCurrency : assetCurrencies[key];
+          const eurusd = exchangeRateMap.get(point.date);
+          if (!native || native === displayCurrency || !eurusd || key === 'Total Portfolio') {
+            cp[key] = point[key];
+          } else if (native === 'EUR' && displayCurrency === 'USD') {
+            cp[key] = Math.round(point[key] * eurusd * 100) / 100;
+          } else if (native === 'USD' && displayCurrency === 'EUR') {
+            cp[key] = Math.round(point[key] / eurusd * 100) / 100;
+          } else {
+            cp[key] = point[key];
+          }
+        }
+        return cp;
+      });
+      const hiddenTickers = [...new Set(hiddenTx.map((tx) => tx.ticker))];
+      const convertedHiddenTx = hiddenTx.map((tx) => ({ ...tx, amount: convertTxAmount(tx) }));
+      const hiddenStats = computeStats(hiddenConverted, hiddenTickers, convertedHiddenTx, names, colors).filter((s) => !s.isPortfolio);
+      return [...visibleStats, ...hiddenStats];
+    }
+    return visibleStats;
+  }, [needsConversion, convertedChartData, stats, visibleTransactions, transactions, selectedAssets, hiddenAssets, livePriceCache, assetCurrencies, displayCurrency, exchangeRateMap, convertTxAmount, toNativeAmount]);
+
+  // Extract current share counts from raw chart data (units don't depend on currency)
+  const currentShares = useMemo(() => {
+    if (chartData.length === 0) return {};
+    const last = chartData[chartData.length - 1];
+    const shares = {};
+    selectedTickers.forEach((t) => {
+      const units = last[t + '_units'];
+      if (units != null && units > 0) shares[t] = units;
+    });
+    return shares;
+  }, [chartData, selectedTickers]);
+
+  // Auto-compute modalAmount when in shares mode (uses closing price from cache)
+  useEffect(() => {
+    if (modalInputMode !== 'shares') return;
+    const shares = Number(modalShares);
+    if (!shares || shares <= 0) return;
+    const ticker = stagedAsset?.symbol || sellTicker;
+    if (!ticker || !livePriceCache?.[ticker]) return;
+    const prices = livePriceCache[ticker];
+    const entry = prices.findLast(p => p.date <= modalDate) || prices[prices.length - 1];
+    if (!entry) return;
+    const closingPrice = entry.close;
+    const nativeAmt = shares * closingPrice;
+    const native = assetCurrencies[ticker] || displayCurrency;
+    const rate = getConversionRate(native, modalDate);
+    setModalAmount(Math.round(nativeAmt * rate * 100) / 100);
+    setModalPrice(closingPrice);
+  }, [modalInputMode, modalShares, modalDate, stagedAsset, sellTicker, livePriceCache, assetCurrencies, displayCurrency, getConversionRate]);
 
   const chartTickers = selectedTickers.filter((t) => !hiddenAssets.has(t) && livePriceCache?.[t]);
 
@@ -1422,9 +1674,9 @@ const App = () => {
   }, [chartRange]);
 
   const filteredChartData = useMemo(() => {
-    if (!chartRangeCutoff || chartData.length === 0) return chartData;
-    return chartData.filter(p => p.date >= chartRangeCutoff);
-  }, [chartData, chartRangeCutoff]);
+    if (!chartRangeCutoff || convertedChartData.length === 0) return convertedChartData;
+    return convertedChartData.filter(p => p.date >= chartRangeCutoff);
+  }, [convertedChartData, chartRangeCutoff]);
 
   const oldestStockTxDate = useMemo(() => {
     const stockTxs = visibleTransactions.filter(tx => tx.ticker !== CASH_TICKER);
@@ -1439,8 +1691,8 @@ const App = () => {
     padded.setDate(padded.getDate() - 30);
     const stockStart = padded.toISOString().split('T')[0];
     const cutoff = chartRangeCutoff && chartRangeCutoff > stockStart ? chartRangeCutoff : stockStart;
-    return chartData.filter(p => p.date >= cutoff);
-  }, [chartData, chartRangeCutoff, oldestStockTxDate, filteredChartData]);
+    return convertedChartData.filter(p => p.date >= cutoff);
+  }, [convertedChartData, chartRangeCutoff, oldestStockTxDate, filteredChartData]);
 
   // ─── Live quotes for all tickers
 
@@ -1466,15 +1718,15 @@ const App = () => {
 
   // Build two marker sets: per-asset line + Total Portfolio line
   const { assetMarkers, portfolioMarkers } = useMemo(() => {
-    if (chartData.length === 0) return { assetMarkers: [], portfolioMarkers: [] };
-    const dateIndex = new Map(chartData.map((p, i) => [p.date, i]));
+    if (convertedChartData.length === 0) return { assetMarkers: [], portfolioMarkers: [] };
+    const dateIndex = new Map(convertedChartData.map((p, i) => [p.date, i]));
     const asset = [];
     const portfolio = [];
     visibleTransactions.forEach((tx) => {
       let idx = dateIndex.get(tx.date);
-      if (idx == null) idx = chartData.findIndex((p) => p.date >= tx.date);
+      if (idx == null) idx = convertedChartData.findIndex((p) => p.date >= tx.date);
       if (idx == null || idx < 0) return;
-      const point = chartData[idx];
+      const point = convertedChartData[idx];
       const tickerVal = point[tx.ticker];
       if (tickerVal != null) {
         asset.push({ ...tx, chartDate: point.date, value: tickerVal });
@@ -1485,7 +1737,7 @@ const App = () => {
       }
     });
     return { assetMarkers: asset, portfolioMarkers: portfolio };
-  }, [chartData, visibleTransactions]);
+  }, [convertedChartData, visibleTransactions]);
 
   const handleLegendClick = useCallback((e) => {
     const key = e.dataKey;
@@ -1507,6 +1759,16 @@ const App = () => {
     }
   }, [dark, user]);
 
+  const toggleCurrency = useCallback(() => {
+    const next = displayCurrency === 'USD' ? 'EUR' : 'USD';
+    setDisplayCurrency(next);
+    _displayCurrency = next;
+    localStorage.setItem('investo-currency', next);
+    if (supabase && user) {
+      supabase.from('portfolios').update({ display_currency: next }).eq('user_id', user.id);
+    }
+  }, [displayCurrency, user]);
+
 
   return (
     <div className={`min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans p-4 md:p-8${dark ? ' dark' : ''}`}>
@@ -1519,6 +1781,13 @@ const App = () => {
             className="px-4 py-2 rounded-2xl font-bold transition-all flex items-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white text-sm"
           >
             New Transaction
+          </button>
+          <button
+            onClick={toggleCurrency}
+            className="ml-3 px-3 py-2 rounded-2xl font-black text-sm transition-all active:scale-95 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300"
+            title={`Display in ${displayCurrency === 'USD' ? 'EUR' : 'USD'}`}
+          >
+            {displayCurrency === 'USD' ? '$' : '€'}
           </button>
           <div className="ml-auto">
           <div className="relative flex">
@@ -1653,19 +1922,19 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
               </button>
 
               {overviewOpen && (() => {
-                const lastPoint = chartData[chartData.length - 1];
+                const lastPoint = convertedChartData[convertedChartData.length - 1];
                 const visTxs = transactions.filter(tx => !hiddenAssets.has(tx.ticker));
                 // Stock calculations
                 const visibleStockTickers = selectedTickers.filter(t => !hiddenAssets.has(t));
-                const stockBuys = visTxs.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
-                const stockSells = visTxs.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0);
+                const stockBuys = visTxs.reduce((s, tx) => s + (tx.type === 'buy' ? convertTxAmount(tx) : 0), 0);
+                const stockSells = visTxs.reduce((s, tx) => s + (tx.type === 'sell' ? convertTxAmount(tx) : 0), 0);
                 const stockValue = visibleStockTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
                 const stockReturn = stockValue + stockSells - stockBuys;
                 const stockReturnPct = stockBuys > 0 ? (stockReturn / stockBuys) * 100 : 0;
                 const stockPositive = stockReturn >= 0;
                 // Bank calculations
-                const bankDeposited = visTxs.reduce((s, tx) => s + (tx.type === 'deposit' ? tx.amount : 0), 0);
-                const bankWithdrawn = visTxs.reduce((s, tx) => s + (tx.type === 'withdraw' ? tx.amount : 0), 0);
+                const bankDeposited = visTxs.reduce((s, tx) => s + (tx.type === 'deposit' ? convertTxAmount(tx) : 0), 0);
+                const bankWithdrawn = visTxs.reduce((s, tx) => s + (tx.type === 'withdraw' ? convertTxAmount(tx) : 0), 0);
                 const bankBalance = bankDeposited - bankWithdrawn;
                 // Net worth
                 const netWorth = stockValue + bankBalance;
@@ -1795,7 +2064,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       {txs.map((tx) => (
                         <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'buy' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400'}`}>
                           <span className="uppercase text-[10px] font-black w-8">{tx.type}</span>
-                          <span className="flex-1 text-slate-700 dark:text-slate-300">{formatCurrency(tx.amount)}{tx.price ? <span className="text-slate-400 ml-1">@${tx.price}</span> : ''}</span>
+                          <span className="flex-1 text-slate-700 dark:text-slate-300">{formatCurrency(convertTxAmount(tx))}{tx.price ? <span className="text-slate-400 ml-1">@{getCurrencySymbol(assetCurrencies[tx.ticker] || displayCurrency)}{tx.price}</span> : ''}</span>
                           <span className="text-slate-400 text-[10px]">{formatShortDate(tx.date)}</span>
                           <button onClick={(e) => { e.stopPropagation(); removeTx(tx.id); }} className="text-slate-300 dark:text-slate-600 hover:text-rose-400 p-0.5 transition-colors">
                             <Trash2 className="w-3 h-3" />
@@ -1829,7 +2098,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     {cashTxs.map((tx) => (
                       <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'deposit' ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400'}`}>
                         <span className="uppercase text-[10px] font-black w-14">{tx.type === 'deposit' ? 'deposit' : 'withdraw'}</span>
-                        <span className="flex-1 text-slate-700 dark:text-slate-300">{formatCurrency(tx.amount)}</span>
+                        <span className="flex-1 text-slate-700 dark:text-slate-300">{formatCurrency(convertTxAmount(tx))}</span>
                         <span className="text-slate-400 text-[10px]">{formatShortDate(tx.date)}</span>
                         <button onClick={(e) => { e.stopPropagation(); removeTx(tx.id); }} className="text-slate-300 dark:text-slate-600 hover:text-rose-400 p-0.5 transition-colors">
                           <Trash2 className="w-3 h-3" />
@@ -1872,7 +2141,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2" data-share-hide>
-                  {chartPage === 1 && chartData.length > 0 && chartTickers.length > 0 && (
+                  {chartPage === 1 && convertedChartData.length > 0 && chartTickers.length > 0 && (
                     <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
                       {['%', '$'].map((label, i) => (
                         <button
@@ -1889,7 +2158,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       ))}
                     </div>
                   )}
-                  {chartPage === 2 && chartData.length > 0 && chartTickers.length > 0 && (
+                  {chartPage === 2 && convertedChartData.length > 0 && chartTickers.length > 0 && (
                     <button
                       onClick={() => setShowMarkers((v) => !v)}
                       className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all whitespace-nowrap ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
@@ -1897,7 +2166,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       {showMarkers ? '● Markers On' : '○ Markers Off'}
                     </button>
                   )}
-                  {chartPage === 3 && chartData.length > 0 && (
+                  {chartPage === 3 && convertedChartData.length > 0 && (
                     <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
                       {['Allocation', 'Return'].map((label, i) => (
                         <button
@@ -1914,7 +2183,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       ))}
                     </div>
                   )}
-                  {chartPage === 6 && chartData.length > 0 && chartTickers.length > 0 && (
+                  {chartPage === 6 && convertedChartData.length > 0 && chartTickers.length > 0 && (
                     <button
                       onClick={() => setShowMarkers((v) => !v)}
                       className={`text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all whitespace-nowrap ${showMarkers ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900' : 'bg-slate-100 dark:bg-slate-700 text-slate-400'}`}
@@ -1922,7 +2191,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       {showMarkers ? '● Markers On' : '○ Markers Off'}
                     </button>
                   )}
-                  {chartData.length > 0 && stats.length > 0 && (
+                  {convertedChartData.length > 0 && convertedStats.length > 0 && (
                     <button
                       onClick={() => {
                         setShareOpen(true);
@@ -1948,7 +2217,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   >
                     {document.fullscreenElement ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                   </button>
-                  {chartData.length > 0 && (
+                  {convertedChartData.length > 0 && (
                     <div className="flex items-center gap-2">
                       <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
                         {Object.keys(CHART_CATEGORIES).map((cat) => (
@@ -1984,7 +2253,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   )}
                 </div>
               </div>
-              {[0, 1, 2, 4, 6, 7].includes(chartPage) && chartData.length > 0 && (
+              {[0, 1, 2, 4, 6, 7].includes(chartPage) && convertedChartData.length > 0 && (
                 <div className="flex flex-wrap gap-1 mb-2 -mt-2 sm:-mt-4" data-share-hide>
                   {CHART_RANGES.map(r => (
                     <button key={r} onClick={() => setChartRange(r)}
@@ -2023,7 +2292,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     <Loader2 className="w-12 h-12 animate-spin text-blue-500" />
                     <p className="font-bold text-sm">Fetching market data…</p>
                   </div>
-                ) : chartData.length === 0 ? (
+                ) : convertedChartData.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
                     <div className="w-20 h-20 bg-slate-50 dark:bg-slate-700 rounded-full flex items-center justify-center shadow-inner">
                       <BarChart3 className="w-10 h-10 text-slate-300" />
@@ -2087,8 +2356,8 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   let cumDeposits = 0;
                   let cumWithdrawals = 0;
                   stockTxs.forEach((tx) => {
-                    if (tx.type === 'buy') cumDeposits += tx.amount;
-                    else cumWithdrawals += tx.amount;
+                    if (tx.type === 'buy') cumDeposits += convertTxAmount(tx);
+                    else cumWithdrawals += convertTxAmount(tx);
                     depositMap.set(tx.date, { deposits: cumDeposits, withdrawals: cumWithdrawals });
                   });
                   let lastDep = 0;
@@ -2099,10 +2368,12 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     const pv = selectedTickers.filter(t => !hiddenAssets.has(t)).reduce((s, t) => s + (p[t] ?? 0), 0);
                     const pnl = pv + lastWith - lastDep;
                     const pct = lastDep > 0 ? (pnl / lastDep) * 100 : 0;
-                    return { date: p.date, 'Return %': Math.round(pct * 100) / 100, 'Return $': Math.round(pnl) };
+                    const cSym = getCurrencySymbol(displayCurrency);
+                    return { date: p.date, 'Return %': Math.round(pct * 100) / 100, [`Return ${cSym}`]: Math.round(pnl) };
                   }).filter((d) => d['Return %'] !== 0 || d['Return $'] !== 0);
                   const isPct = perfMode === 0;
-                  const dataKey = isPct ? 'Return %' : 'Return $';
+                  const perfSym = getCurrencySymbol(displayCurrency);
+                  const dataKey = isPct ? 'Return %' : `Return ${perfSym}`;
                   return (
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={perfData} margin={{ top: 10, right: 30, left: 10, bottom: 5 }}>
@@ -2178,7 +2449,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   );
                 })()
                 : chartPage === 3 ? (() => {
-                  const lastPoint = chartData[chartData.length - 1];
+                  const lastPoint = convertedChartData[convertedChartData.length - 1];
                   let pieData, total, isReturnMode = pieMode === 1;
                   if (!isReturnMode) {
                     const allocTickers = hasCashTx && (lastPoint?.[CASH_TICKER] ?? 0) > 0 ? [...chartTickers, CASH_TICKER] : chartTickers;
@@ -2195,8 +2466,8 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     pieData = chartTickers
                       .map((ticker) => {
                         const txs = transactions.filter((tx) => tx.ticker === ticker);
-                        const deps = txs.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
-                        const withs = txs.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0);
+                        const deps = txs.reduce((s, tx) => s + (tx.type === 'buy' ? convertTxAmount(tx) : 0), 0);
+                        const withs = txs.reduce((s, tx) => s + (tx.type === 'sell' ? convertTxAmount(tx) : 0), 0);
                         const fv = lastPoint?.[ticker] ?? 0;
                         const pnl = fv + withs - deps;
                         return {
@@ -2278,8 +2549,8 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   let cumDeposits = 0;
                   let cumWithdrawals = 0;
                   sortedTx.forEach((tx) => {
-                    if (tx.type === 'buy' || tx.type === 'deposit') cumDeposits += tx.amount;
-                    else if (tx.type === 'sell' || tx.type === 'withdraw') cumWithdrawals += tx.amount;
+                    if (tx.type === 'buy' || tx.type === 'deposit') cumDeposits += convertTxAmount(tx);
+                    else if (tx.type === 'sell' || tx.type === 'withdraw') cumWithdrawals += convertTxAmount(tx);
                     depositMap.set(tx.date, { deposits: cumDeposits, withdrawals: cumWithdrawals });
                   });
                   let lastDep = 0;
@@ -2300,7 +2571,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                         <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} minTickGap={60}
                           tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })} />
                         <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
-                          tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                          tickFormatter={(v) => formatShort(v)} />
                         <Tooltip
                           contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
                           itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
@@ -2316,12 +2587,12 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
 
                 : chartPage === 5 ? (() => {
                   // Returns by Asset — bar chart (page 5)
-                  const lastPoint = chartData[chartData.length - 1];
+                  const lastPoint = convertedChartData[convertedChartData.length - 1];
                   const barData = chartTickers
                     .map((ticker) => {
                       const txs = transactions.filter((tx) => tx.ticker === ticker);
-                      const deposits = txs.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
-                      const withdrawals = txs.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0);
+                      const deposits = txs.reduce((s, tx) => s + (tx.type === 'buy' ? convertTxAmount(tx) : 0), 0);
+                      const withdrawals = txs.reduce((s, tx) => s + (tx.type === 'sell' ? convertTxAmount(tx) : 0), 0);
                       const fv = lastPoint?.[ticker] ?? 0;
                       const pnl = fv + withdrawals - deposits;
                       return {
@@ -2415,12 +2686,12 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                         <XAxis dataKey="date" tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false} minTickGap={60}
                           tickFormatter={(v) => new Date(v).toLocaleDateString('en-US', { year: 'numeric', month: 'short' })} />
                         <YAxis tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} axisLine={false} tickLine={false}
-                          tickFormatter={(v) => `$${v.toLocaleString()}`}
+                          tickFormatter={(v) => `${getCurrencySymbol(assetCurrencies[ticker] || 'USD')}${v.toLocaleString()}`}
                           domain={['auto', 'auto']} />
                         <Tooltip
                           contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
                           itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
-                          formatter={(v) => [`$${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Price']}
+                          formatter={(v) => [`${getCurrencySymbol(assetCurrencies[ticker] || 'USD')}${Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Price']}
                           labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })} />
                         <Area type="monotone" dataKey="price" stroke={asset?.color || '#3b82f6'} strokeWidth={2} fill={asset?.color || '#3b82f6'} fillOpacity={0.1} dot={false} />
                         {showMarkers && tickerTxMarkers.map((m) => (
@@ -2444,9 +2715,9 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
             </div>}
 
             {/* Stats Cards */}
-            {stats.length > 0 && (() => {
-              const portfolio = stats.find((s) => s.isPortfolio);
-              const assets = stats.filter((s) => !s.isPortfolio);
+            {convertedStats.length > 0 && (() => {
+              const portfolio = convertedStats.find((s) => s.isPortfolio);
+              const assets = convertedStats.filter((s) => !s.isPortfolio);
               return (
                 <div ref={statsRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 ${statsOpen ? 'md:p-8' : ''} rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700`}>
                   <button onClick={() => setStatsOpen(v => !v)} className="w-full flex items-center justify-between">
@@ -2496,7 +2767,10 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                             {stat.name} · {formatCurrency(stat.totalDeposits)}
                           </h4>
                           <p className="text-2xl font-black tracking-tight">{formatCurrency(stat.finalValue)}</p>
-                          <div className="mt-2 flex gap-3 text-[10px] font-bold">
+                          <div className="mt-2 flex flex-wrap gap-3 text-[10px] font-bold">
+                            {stat.ticker !== CASH_TICKER && currentShares[stat.ticker] != null && (
+                              <span className="text-blue-500 dark:text-blue-400">{currentShares[stat.ticker] < 1 ? currentShares[stat.ticker].toFixed(4) : currentShares[stat.ticker].toFixed(2)} shares</span>
+                            )}
                             <span className="text-slate-400">Ann. {formatPercent(stat.annualizedReturn)}</span>
                           </div>
                         </div>
@@ -2512,7 +2786,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
         </div>
 
         {/* Summary Table — full width */}
-        {stats.length > 0 && (
+        {convertedStats.length > 0 && (
           <div ref={tableRef} className="bg-white dark:bg-slate-800 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
             <div className="p-4 sm:p-6">
               <button onClick={() => setSummaryOpen(v => !v)} className="w-full flex items-center justify-between">
@@ -2527,6 +2801,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 <thead className="text-slate-400 text-[10px] font-black uppercase tracking-widest bg-slate-50/50 dark:bg-slate-800/50">
                   <tr>
                     <th className="px-4 sm:px-8 py-3 sm:py-4">Asset</th>
+                    <th className="px-4 sm:px-8 py-3 sm:py-4 text-right">Shares</th>
                     <th className="px-4 sm:px-8 py-3 sm:py-4 text-right">Deposits</th>
                     <th className="px-4 sm:px-8 py-3 sm:py-4 text-right">Withdrawals</th>
                     <th className="px-4 sm:px-8 py-3 sm:py-4 text-right">Balance</th>
@@ -2535,13 +2810,18 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {stats.filter((s) => !s.isPortfolio && !hiddenAssets.has(s.ticker)).map((stat, idx) => (
+                  {convertedStats.filter((s) => !s.isPortfolio && !hiddenAssets.has(s.ticker)).map((stat, idx) => (
                     <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                       <td className="px-4 sm:px-8 py-4 sm:py-6">
                         <div className="flex items-center gap-3 sm:gap-4">
                           <div className="w-3 h-3 rounded-full shadow-sm" style={{ backgroundColor: stat.color }} />
                           <span className="font-black text-sm">{stat.name} ({displayTicker(stat.ticker)})</span>
                         </div>
+                      </td>
+                      <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm text-blue-600 dark:text-blue-400">
+                        {stat.ticker !== CASH_TICKER && currentShares[stat.ticker] != null
+                          ? (currentShares[stat.ticker] < 1 ? currentShares[stat.ticker].toFixed(4) : currentShares[stat.ticker].toFixed(2))
+                          : '—'}
                       </td>
                       <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm">{formatCurrency(stat.totalDeposits)}</td>
                       <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm">{formatCurrency(stat.totalWithdrawals)}</td>
@@ -2559,11 +2839,12 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm text-slate-500 dark:text-slate-400">{formatPercent(stat.annualizedReturn)}</td>
                     </tr>
                   ))}
-                  {stats.find((s) => s.isPortfolio) && (() => {
-                    const p = stats.find((s) => s.isPortfolio);
+                  {convertedStats.find((s) => s.isPortfolio) && (() => {
+                    const p = convertedStats.find((s) => s.isPortfolio);
                     return (
                       <tr className="bg-slate-900 text-white border-t border-slate-800">
                         <td className="px-4 sm:px-8 py-6 sm:py-10 font-black rounded-bl-2xl sm:rounded-bl-[2.5rem]">Portfolio Total</td>
+                        <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-bold"></td>
                         <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-bold">{formatCurrency(p.totalDeposits)}</td>
                         <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-bold">{formatCurrency(p.totalWithdrawals)}</td>
                         <td className="px-4 sm:px-8 py-6 sm:py-10 text-right font-black text-blue-400 text-lg">{formatCurrency(p.finalValue)}</td>
@@ -2725,33 +3006,65 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                   </div>
                 </div>
                 <div className="space-y-3">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
-                      <input type="number" value={modalAmount} onChange={(e) => {
-                        const value = e.target.value;
-                        const numValue = Number(value);
-                        if (value !== '' && !isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
-                          setModalAmount(numValue);
-                        } else if (value === '') {
-                          setModalAmount(0);
-                        }
-                      }}
-                        className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-emerald-500 outline-none" />
-                    </div>
+                  <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
+                    {['amount', 'shares'].map((mode) => (
+                      <button key={mode} onClick={() => setModalInputMode(mode)}
+                        className={`flex-1 text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${modalInputMode === mode ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}>
+                        {mode === 'amount' ? 'Amount' : 'Shares'}
+                      </button>
+                    ))}
                   </div>
+                  {modalInputMode === 'amount' ? (
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">{getCurrencySymbol(displayCurrency)}</span>
+                        <input type="number" value={modalAmount} onChange={(e) => {
+                          const value = e.target.value;
+                          const numValue = Number(value);
+                          if (value !== '' && !isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
+                            setModalAmount(numValue);
+                          } else if (value === '') {
+                            setModalAmount(0);
+                          }
+                        }}
+                          className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-emerald-500 outline-none" />
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Number of Shares</label>
+                      <input type="number" value={modalShares} onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '') { setModalShares(''); return; }
+                        const n = Number(v);
+                        if (!isNaN(n) && isFinite(n) && n >= 0) setModalShares(v);
+                      }}
+                        step="any" placeholder="0"
+                        className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 px-3 text-lg font-black focus:ring-2 focus:ring-emerald-500 outline-none" />
+                    </div>
+                  )}
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Purchase Date</label>
                     <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
                       className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none" />
                   </div>
-                  <IntradayPricePicker ticker={stagedAsset.symbol} date={modalDate} price={modalPrice} onPriceChange={setModalPrice} accentColor="emerald" />
+                  {modalInputMode === 'amount' ? (
+                    <IntradayPricePicker ticker={stagedAsset.symbol} date={modalDate} price={modalPrice} onPriceChange={setModalPrice} accentColor="emerald" />
+                  ) : Number(modalShares) > 0 && modalAmount > 0 && (
+                    <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950 border border-emerald-100 dark:border-emerald-900">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total</span>
+                        <span className="text-lg font-black text-emerald-600 dark:text-emerald-400">{formatCurrency(modalAmount)}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-3 pt-2">
                   <button onClick={() => setStagedAsset(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Back</button>
                   <button onClick={() => { addBuy(stagedAsset.symbol, stagedAsset.name); closeModal(); }}
-                    className="flex-1 py-3 rounded-2xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-lg transition-all active:scale-95">
+                    disabled={modalInputMode === 'shares' ? (!modalShares || Number(modalShares) <= 0 || modalAmount <= 0) : modalAmount <= 0}
+                    className="flex-1 py-3 rounded-2xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
                     Record
                   </button>
                 </div>
@@ -2831,8 +3144,10 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
             </div>
 
             {sellTicker ? (() => {
-              const entry = chartData.findLast((p) => p.date <= modalDate);
+              const entry = convertedChartData.findLast((p) => p.date <= modalDate);
               const availableBalance = entry?.[sellTicker] ?? 0;
+              const sharesEntry = chartData.findLast((p) => p.date <= modalDate);
+              const availableShares = sharesEntry?.[sellTicker + '_units'] ?? 0;
               return (
               <div className="space-y-4">
                 <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950 border border-rose-100 dark:border-rose-900">
@@ -2842,27 +3157,51 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                     </div>
                     <div className="min-w-0">
                       <h4 className="text-base font-black truncate">{selectedAssets[sellTicker]?.name}</h4>
-                      <p className="text-[10px] font-bold text-rose-500 uppercase">{sellTicker} · Available: {formatCurrency(Math.max(0, availableBalance))}</p>
+                      <p className="text-[10px] font-bold text-rose-500 uppercase">{sellTicker} · {modalInputMode === 'shares'
+                        ? `Available: ${availableShares < 1 ? availableShares.toFixed(4) : availableShares.toFixed(2)} shares`
+                        : `Available: ${formatCurrency(Math.max(0, availableBalance))}`}</p>
                     </div>
                   </div>
                 </div>
                 <div className="space-y-3">
-                  <div>
-                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sale Amount</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
-                      <input type="number" value={modalAmount} onChange={(e) => {
-                        const value = e.target.value;
-                        const numValue = Number(value);
-                        if (value !== '' && !isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
-                          setModalAmount(numValue);
-                        } else if (value === '') {
-                          setModalAmount(0);
-                        }
-                      }}
-                        className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-rose-500 outline-none" />
-                    </div>
+                  <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
+                    {['amount', 'shares'].map((mode) => (
+                      <button key={mode} onClick={() => setModalInputMode(mode)}
+                        className={`flex-1 text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${modalInputMode === mode ? 'bg-rose-600 text-white' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}>
+                        {mode === 'amount' ? 'Amount' : 'Shares'}
+                      </button>
+                    ))}
                   </div>
+                  {modalInputMode === 'amount' ? (
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sale Amount</label>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">{getCurrencySymbol(displayCurrency)}</span>
+                        <input type="number" value={modalAmount} onChange={(e) => {
+                          const value = e.target.value;
+                          const numValue = Number(value);
+                          if (value !== '' && !isNaN(numValue) && isFinite(numValue) && numValue >= 0) {
+                            setModalAmount(numValue);
+                          } else if (value === '') {
+                            setModalAmount(0);
+                          }
+                        }}
+                          className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-rose-500 outline-none" />
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Number of Shares</label>
+                      <input type="number" value={modalShares} onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '') { setModalShares(''); return; }
+                        const n = Number(v);
+                        if (!isNaN(n) && isFinite(n) && n >= 0) setModalShares(v);
+                      }}
+                        step="any" placeholder="0"
+                        className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 px-3 text-lg font-black focus:ring-2 focus:ring-rose-500 outline-none" />
+                    </div>
+                  )}
                   <div>
                     <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Sale Date</label>
                     <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
@@ -2872,12 +3211,23 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       })()}
                       className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 focus:ring-rose-500 outline-none" />
                   </div>
-                  <IntradayPricePicker ticker={sellTicker} date={modalDate} price={modalPrice} onPriceChange={setModalPrice} accentColor="rose" />
+                  {modalInputMode === 'amount' ? (
+                    <IntradayPricePicker ticker={sellTicker} date={modalDate} price={modalPrice} onPriceChange={setModalPrice} accentColor="rose" />
+                  ) : Number(modalShares) > 0 && modalAmount > 0 && (
+                    <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950 border border-rose-100 dark:border-rose-900">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total</span>
+                        <span className="text-lg font-black text-rose-600 dark:text-rose-400">{formatCurrency(modalAmount)}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex gap-3 pt-2">
                   <button onClick={() => setSellTicker(null)} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Back</button>
                   <button onClick={() => { addSell(sellTicker); closeModal(); }}
-                    disabled={modalAmount <= 0 || modalAmount > availableBalance}
+                    disabled={modalInputMode === 'shares'
+                      ? (!modalShares || Number(modalShares) <= 0 || modalAmount <= 0 || Number(modalShares) > availableShares)
+                      : (modalAmount <= 0 || modalAmount > availableBalance)}
                     className="flex-1 py-3 rounded-2xl font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
                     Record
                   </button>
@@ -2925,7 +3275,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">{getCurrencySymbol(displayCurrency)}</span>
                   <input type="number" value={modalAmount} onChange={(e) => {
                     const value = e.target.value;
                     const numValue = Number(value);
@@ -2983,7 +3333,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"><DollarSign className="w-3.5 h-3.5" /></span>
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">{getCurrencySymbol(displayCurrency)}</span>
                   <input 
                     type="text" 
                     inputMode="decimal"
