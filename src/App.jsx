@@ -636,8 +636,16 @@ const App = () => {
     const date = typeof tx.date === 'string' ? tx.date : String(tx.date || TODAY);
     setModalDate(date);
     setModalPrice(tx.price || null);
+    setModalInputMode('amount');
+    // Pre-compute shares from amount / price
+    let shares = '';
+    if (tx.ticker !== CASH_TICKER) {
+      const price = tx.price || priceCache?.[tx.ticker]?.findLast(p => p.date <= tx.date)?.price;
+      if (price && price > 0) shares = String(Math.round((amount / price) * 10000) / 10000);
+    }
+    setModalShares(shares);
     setModalMode('edit');
-  }, []);
+  }, [priceCache]);
 
   const saveEdit = useCallback((overrideAmount = null, overrideDate = null, overridePrice = null) => {
     if (!editingTx) return;
@@ -1642,7 +1650,7 @@ const App = () => {
     if (modalInputMode !== 'shares') return;
     const shares = Number(modalShares);
     if (!shares || shares <= 0) { setModalAmount(0); setModalPrice(null); return; }
-    const ticker = stagedAsset?.symbol || sellTicker;
+    const ticker = stagedAsset?.symbol || sellTicker || editingTx?.ticker;
     if (!ticker) return;
 
     // Try the live price cache first
@@ -1688,7 +1696,7 @@ const App = () => {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [modalInputMode, modalShares, modalDate, stagedAsset, sellTicker, livePriceCache, assetCurrencies, displayCurrency, getConversionRate]);
+  }, [modalInputMode, modalShares, modalDate, stagedAsset, sellTicker, editingTx, livePriceCache, assetCurrencies, displayCurrency, getConversionRate]);
 
   const chartTickers = selectedTickers.filter((t) => !hiddenAssets.has(t) && livePriceCache?.[t]);
 
@@ -3368,48 +3376,75 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
               </div>
             </div>
             <div className="space-y-3">
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">{getCurrencySymbol(displayCurrency)}</span>
-                  <input 
-                    type="text" 
-                    inputMode="decimal"
-                    value={modalAmount === '' ? '' : modalAmount} 
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      // Allow empty
-                      if (value === '') {
-                        setModalAmount('');
-                        return;
-                      }
-                      // Allow partial number entry (e.g., "10.", "100")
-                      if (/^\d*\.?\d*$/.test(value)) {
-                        // If it's a valid number or partial number, store as is
-                        const numValue = parseFloat(value);
-                        if (!isNaN(numValue)) {
-                          setModalAmount(numValue);
-                        } else {
-                          // Allow typing partial numbers like "10."
-                          setModalAmount(value);
-                        }
-                      }
+              {editingTx.ticker !== CASH_TICKER && (
+                <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
+                  {['amount', 'shares'].map((mode) => (
+                    <button key={mode} onClick={() => {
+                      setModalInputMode(mode);
+                      // Keep the pre-computed shares for the edited transaction (set in openEditModal).
+                      if (mode === 'shares' && !modalShares) { setModalAmount(0); setModalPrice(null); }
                     }}
-                    autoFocus
-                    onFocus={(e) => e.target.select()}
-                    className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none" />
+                      className={`flex-1 text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${modalInputMode === mode ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}>
+                      {mode === 'amount' ? 'Amount' : 'Shares'}
+                    </button>
+                  ))}
                 </div>
-              </div>
+              )}
+              {modalInputMode === 'amount' || editingTx.ticker === CASH_TICKER ? (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm font-bold">{getCurrencySymbol(displayCurrency)}</span>
+                    <input 
+                      type="text" 
+                      inputMode="decimal"
+                      value={modalAmount === '' ? '' : modalAmount} 
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '') { setModalAmount(''); return; }
+                        if (/^\d*\.?\d*$/.test(value)) {
+                          const numValue = parseFloat(value);
+                          if (!isNaN(numValue)) setModalAmount(numValue);
+                          else setModalAmount(value);
+                        }
+                      }}
+                      autoFocus
+                      onFocus={(e) => e.target.select()}
+                      className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 pl-8 pr-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none" />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Number of Shares</label>
+                  <input type="number" value={modalShares} onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === '') { setModalShares(''); return; }
+                    const n = Number(v);
+                    if (!isNaN(n) && isFinite(n) && n >= 0) setModalShares(v);
+                  }}
+                    step="any" placeholder="0" autoFocus
+                    className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 px-3 text-lg font-black focus:ring-2 focus:ring-blue-500 outline-none" />
+                </div>
+              )}
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Date</label>
                 <input type="date" value={modalDate} onChange={(e) => setModalDate(e.target.value)}
                   className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-2.5 px-3 text-xs font-bold text-slate-600 dark:text-slate-300 focus:ring-2 focus:ring-blue-500 outline-none" />
               </div>
-              <IntradayPricePicker ticker={editingTx.ticker} date={modalDate} price={modalPrice} onPriceChange={setModalPrice} accentColor="blue" />
+              {modalInputMode === 'amount' || editingTx.ticker === CASH_TICKER ? (
+                <IntradayPricePicker ticker={editingTx.ticker} date={modalDate} price={modalPrice} onPriceChange={setModalPrice} accentColor="blue" />
+              ) : Number(modalShares) > 0 && modalAmount > 0 && (
+                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950 border border-blue-100 dark:border-blue-900">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Total</span>
+                    <span className="text-lg font-black text-blue-600 dark:text-blue-400">{formatCurrency(modalAmount)}</span>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex gap-3 pt-2">
               <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Cancel</button>
-              <button onClick={() => saveEdit()} disabled={!modalAmount || modalAmount <= 0}
+              <button onClick={() => saveEdit()} disabled={modalInputMode === 'shares' ? (!modalShares || Number(modalShares) <= 0 || modalAmount <= 0) : (!modalAmount || modalAmount <= 0)}
                 className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
                 Save
               </button>
