@@ -1637,22 +1637,57 @@ const App = () => {
     return shares;
   }, [chartData, selectedTickers]);
 
-  // Auto-compute modalAmount when in shares mode (uses closing price from cache)
+  // Auto-compute modalAmount when in shares mode (uses closing price from cache or fetches on-demand)
   useEffect(() => {
     if (modalInputMode !== 'shares') return;
     const shares = Number(modalShares);
-    if (!shares || shares <= 0) return;
+    if (!shares || shares <= 0) { setModalAmount(0); setModalPrice(null); return; }
     const ticker = stagedAsset?.symbol || sellTicker;
-    if (!ticker || !livePriceCache?.[ticker]) return;
-    const prices = livePriceCache[ticker];
-    const entry = prices.findLast(p => p.date <= modalDate) || prices[prices.length - 1];
-    if (!entry) return;
-    const closingPrice = entry.close;
-    const nativeAmt = shares * closingPrice;
-    const native = assetCurrencies[ticker] || displayCurrency;
-    const rate = getConversionRate(native, modalDate);
-    setModalAmount(Math.round(nativeAmt * rate * 100) / 100);
-    setModalPrice(closingPrice);
+    if (!ticker) return;
+
+    // Try the live price cache first
+    const cached = livePriceCache?.[ticker];
+    if (cached?.length) {
+      const entry = cached.findLast(p => p.date <= modalDate) || cached[0];
+      const closingPrice = entry?.price;
+      if (closingPrice && isFinite(closingPrice)) {
+        const native = assetCurrencies[ticker] || displayCurrency;
+        const rate = getConversionRate(native, modalDate);
+        setModalAmount(Math.round(shares * closingPrice * rate * 100) / 100);
+        setModalPrice(closingPrice);
+        return;
+      }
+    }
+
+    // No cached price — fetch on-demand for this ticker/date
+    let cancelled = false;
+    setModalAmount(0);
+    setModalPrice(null);
+    const period1 = Math.floor(new Date(modalDate + 'T00:00:00').getTime() / 1000) - 86400 * 7;
+    const period2 = Math.floor(new Date(modalDate + 'T00:00:00').getTime() / 1000) + 86400;
+    fetch(`/api/chart/v8/finance/chart/${encodeURIComponent(ticker)}?period1=${period1}&period2=${period2}&interval=1d`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (cancelled) return;
+        const result = data?.chart?.result?.[0];
+        if (!result?.timestamp) return;
+        const timestamps = result.timestamp;
+        const closes = result.indicators?.adjclose?.[0]?.adjclose || result.indicators?.quote?.[0]?.close || [];
+        // Find the closest price on or before modalDate
+        let closingPrice = null;
+        for (let i = timestamps.length - 1; i >= 0; i--) {
+          const d = new Date(timestamps[i] * 1000).toISOString().split('T')[0];
+          if (d <= modalDate && closes[i] != null) { closingPrice = closes[i]; break; }
+        }
+        if (!closingPrice) closingPrice = closes.findLast(c => c != null);
+        if (!closingPrice || !isFinite(closingPrice)) return;
+        const nativeCur = result.meta?.currency?.toUpperCase() || displayCurrency;
+        const rate = getConversionRate(nativeCur, modalDate);
+        setModalAmount(Math.round(shares * closingPrice * rate * 100) / 100);
+        setModalPrice(closingPrice);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
   }, [modalInputMode, modalShares, modalDate, stagedAsset, sellTicker, livePriceCache, assetCurrencies, displayCurrency, getConversionRate]);
 
   const chartTickers = selectedTickers.filter((t) => !hiddenAssets.has(t) && livePriceCache?.[t]);
@@ -3008,7 +3043,10 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                 <div className="space-y-3">
                   <div className="flex bg-slate-100 dark:bg-slate-700 rounded-xl p-0.5">
                     {['amount', 'shares'].map((mode) => (
-                      <button key={mode} onClick={() => setModalInputMode(mode)}
+                      <button key={mode} onClick={() => {
+                        setModalInputMode(mode);
+                        if (mode === 'shares') { setModalAmount(0); setModalPrice(null); }
+                      }}
                         className={`flex-1 text-[10px] font-bold uppercase tracking-widest px-3 py-1.5 rounded-xl transition-all ${modalInputMode === mode ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'}`}>
                         {mode === 'amount' ? 'Amount' : 'Shares'}
                       </button>
