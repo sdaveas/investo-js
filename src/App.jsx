@@ -32,7 +32,7 @@ const currencyFormatters = {
   EUR: new Intl.NumberFormat('en-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }),
 };
 const getCurrencySymbol = (c) => c === 'EUR' ? '€' : '$';
-let _displayCurrency = 'USD';
+let _displayCurrency = 'EUR';
 const formatCurrency = (val) => (currencyFormatters[_displayCurrency] || currencyFormatters.USD).format(val);
 
 const formatPercent = (val) => `${(val * 100).toFixed(1)}%`;
@@ -439,7 +439,7 @@ const App = () => {
 
   // --- Currency ---
   const [displayCurrency, setDisplayCurrency] = useState(() => {
-    try { return savedPortfolio?.displayCurrency || localStorage.getItem('investo-currency') || 'USD'; } catch { return 'USD'; }
+    try { return savedPortfolio?.displayCurrency || localStorage.getItem('investo-currency') || 'EUR'; } catch { return 'EUR'; }
   });
   const [assetCurrencies, setAssetCurrencies] = useState({});  // { ticker: 'USD' | 'EUR' | ... }
   const [exchangeRates, setExchangeRates] = useState([]);      // [{ date, rate }] — EURUSD rate per day
@@ -476,11 +476,11 @@ const App = () => {
 
   const [colorPickerTicker, setColorPickerTicker] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [overviewOpen, setOverviewOpen] = useState(true);
-  const [chartsOpen, setChartsOpen] = useState(true);
-  const [summaryOpen, setSummaryOpen] = useState(true);
-  const [statsOpen, setStatsOpen] = useState(true);
-  const [aboutOpen, setAboutOpen] = useState(false);
+  const [overviewOpen, setOverviewOpen] = useState(() => savedPortfolio?.viewStates?.overviewOpen ?? true);
+  const [chartsOpen, setChartsOpen] = useState(() => savedPortfolio?.viewStates?.chartsOpen ?? true);
+  const [summaryOpen, setSummaryOpen] = useState(() => savedPortfolio?.viewStates?.summaryOpen ?? true);
+  const [statsOpen, setStatsOpen] = useState(() => savedPortfolio?.viewStates?.statsOpen ?? true);
+  const [aboutOpen, setAboutOpen] = useState(() => savedPortfolio?.viewStates?.aboutOpen ?? false);
   const [addTxOpen, setAddTxOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [shareStatus, setShareStatus] = useState(null); // 'capturing' | 'done' | 'error' | null
@@ -1200,12 +1200,14 @@ const App = () => {
         }
       }
       
+      const viewStates = { overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen };
       const dataToSave = {
         transactions: cleanTransactions,
         selectedAssets: cleanSelectedAssets,
         colorIdx: typeof colorIdx.current === 'number' ? colorIdx.current : 0,
         hiddenAssets: [...hiddenAssets],
         displayCurrency,
+        viewStates,
       };
       
       localStorage.setItem(LS_KEY, JSON.stringify(dataToSave));
@@ -1231,7 +1233,7 @@ const App = () => {
         console.error('Fallback save also failed:', fallbackError);
       }
     }
-  }, [transactions, selectedAssets, hiddenAssets, displayCurrency]);
+  }, [transactions, selectedAssets, hiddenAssets, displayCurrency, overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen]);
 
   // Auth state listener
   useEffect(() => {
@@ -1246,7 +1248,7 @@ const App = () => {
         });
         // Load from cloud
         try {
-          const { data } = await supabase.from('portfolios').select('*').eq('user_id', u.id).single();
+          const { data } = await supabase.from('portfolios').select('*').eq('user_id', u.id).maybeSingle();
           if (data?.transactions?.length > 0) {
             isHydratingRef.current = true;
             setTransactions(data.transactions);
@@ -1258,10 +1260,19 @@ const App = () => {
               _displayCurrency = data.display_currency;
               localStorage.setItem('investo-currency', data.display_currency);
             }
+            if (data.view_states) {
+              const vs = data.view_states;
+              if (vs.overviewOpen != null) setOverviewOpen(vs.overviewOpen);
+              if (vs.chartsOpen != null) setChartsOpen(vs.chartsOpen);
+              if (vs.summaryOpen != null) setSummaryOpen(vs.summaryOpen);
+              if (vs.statsOpen != null) setStatsOpen(vs.statsOpen);
+              if (vs.aboutOpen != null) setAboutOpen(vs.aboutOpen);
+            }
             nextTxId = Math.max(...data.transactions.map((t) => t.id), 0) + 1;
             localStorage.setItem(LS_KEY, JSON.stringify({
               transactions: data.transactions, selectedAssets: data.selected_assets || {}, colorIdx: data.color_idx || 0,
-              hiddenAssets: data.hidden_assets || [], displayCurrency: data.display_currency || 'USD',
+              hiddenAssets: data.hidden_assets || [], displayCurrency: data.display_currency || 'EUR',
+              viewStates: data.view_states || {},
             }));
             setTimeout(() => { isHydratingRef.current = false; }, 200);
           }
@@ -1288,8 +1299,7 @@ const App = () => {
     if (!supabase || !user || isHydratingRef.current) return;
     setIsSyncing(true);
     const t = setTimeout(async () => {
-      try {
-        await supabase.from('portfolios').upsert({
+      const { error } = await supabase.from('portfolios').upsert({
           user_id: user.id,
           transactions,
           selected_assets: selectedAssets,
@@ -1297,13 +1307,14 @@ const App = () => {
           color_idx: colorIdx.current,
           dark_mode: dark,
           display_currency: displayCurrency,
+          view_states: { overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen },
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
-      } catch { /* silent */ }
+      if (error) console.error('Supabase upsert error:', error);
       setIsSyncing(false);
     }, 1500);
     return () => { clearTimeout(t); setIsSyncing(false); };
-  }, [transactions, selectedAssets, hiddenAssets, user, dark, displayCurrency]);
+  }, [transactions, selectedAssets, hiddenAssets, user, dark, displayCurrency, overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen]);
 
   const signInWithGoogle = useCallback(async () => {
     if (!supabase) return;
@@ -1312,7 +1323,6 @@ const App = () => {
 
   const signOut = useCallback(async () => {
     if (!supabase) return;
-    try { await supabase.auth.signOut(); } catch { /* ignore */ }
     isHydratingRef.current = true;
     setUser(null);
     setTransactions([]);
@@ -1321,8 +1331,8 @@ const App = () => {
     setPriceCache(null);
     setChartData([]);
     setStats([]);
-    setDisplayCurrency('USD');
-    _displayCurrency = 'USD';
+    setDisplayCurrency('EUR');
+    _displayCurrency = 'EUR';
     setAssetCurrencies({});
     setExchangeRates([]);
     colorIdx.current = 0;
@@ -1330,6 +1340,7 @@ const App = () => {
     localStorage.removeItem(LS_KEY);
     localStorage.removeItem('investo-currency');
     setTimeout(() => { isHydratingRef.current = false; }, 200);
+    try { await supabase.auth.signOut(); } catch { /* ignore */ }
   }, []);
 
   // ─── Auto-fetch prices ──────────────────────────────────────────
