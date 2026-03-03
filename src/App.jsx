@@ -12,7 +12,7 @@ import {
   History, Zap, CheckCircle2, X,
   PanelLeftClose, PanelLeftOpen,
   ShoppingCart, HandCoins, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
-  LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText, Menu, Coffee,
+  LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText, Menu, Coffee, RefreshCw,
   ChevronLeft, ChevronRight, Share2, Camera, Check, Link, ExternalLink, Maximize2, Minimize2,
   Landmark, Eye, EyeOff,
 } from 'lucide-react';
@@ -1353,11 +1353,12 @@ const App = () => {
   }, []);
 
   // Debounced save to Supabase
+  const syncPromiseRef = useRef(null);
   useEffect(() => {
     if (!supabase || !user || isHydratingRef.current) return;
     setIsSyncing(true);
-    const t = setTimeout(async () => {
-      const { error } = await supabase.from('portfolios').upsert({
+    const t = setTimeout(() => {
+      const p = supabase.from('portfolios').upsert({
           user_id: user.id,
           transactions,
           selected_assets: selectedAssets,
@@ -1367,9 +1368,10 @@ const App = () => {
           display_currency: displayCurrency,
           view_states: { overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen },
           updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id' });
-      if (error) console.error('Supabase upsert error:', error);
-      setIsSyncing(false);
+        }, { onConflict: 'user_id' })
+        .then(({ error }) => { if (error) console.error('Supabase upsert error:', error); })
+        .finally(() => { setIsSyncing(false); syncPromiseRef.current = null; });
+      syncPromiseRef.current = p;
     }, 1500);
     return () => { clearTimeout(t); setIsSyncing(false); };
   }, [transactions, selectedAssets, hiddenAssets, user, dark, displayCurrency, overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen]);
@@ -1379,8 +1381,29 @@ const App = () => {
     await supabase.auth.signInWithOAuth({ provider: 'google' });
   }, []);
 
+  const [isSigningOut, setIsSigningOut] = useState(false);
   const signOut = useCallback(async () => {
     if (!supabase) return;
+    setIsSigningOut(true);
+    // Wait for any in-flight sync to finish
+    if (syncPromiseRef.current) {
+      try { await syncPromiseRef.current; } catch { /* ignore */ }
+    }
+    // Final flush to catch any changes since last sync
+    try {
+      if (user) {
+        await supabase.from('portfolios').upsert({
+          user_id: user.id, transactions, selected_assets: selectedAssets,
+          hidden_assets: [...hiddenAssets], color_idx: colorIdx.current,
+          dark_mode: dark, display_currency: displayCurrency,
+          view_states: { overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen },
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id' });
+      }
+    } catch { /* best effort */ }
+    // Sign out from auth (spinner still visible)
+    try { await supabase.auth.signOut(); } catch { /* ignore */ }
+    // Now clear local state
     isHydratingRef.current = true;
     setUser(null);
     setTransactions([]);
@@ -1397,9 +1420,9 @@ const App = () => {
     fetchedRangesRef.current = {};
     localStorage.removeItem(LS_KEY);
     localStorage.removeItem('investo-currency');
+    setIsSigningOut(false);
     setTimeout(() => { isHydratingRef.current = false; }, 200);
-    try { await supabase.auth.signOut(); } catch { /* ignore */ }
-  }, []);
+  }, [user, transactions, selectedAssets, hiddenAssets, dark, displayCurrency, overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen]);
 
   // ─── Auto-fetch prices ──────────────────────────────────────────
 
@@ -1887,6 +1910,7 @@ const App = () => {
       <div className="max-w-7xl mx-auto space-y-4">
 
         {/* Menu */}
+        <div className="sticky top-0 z-30 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur-sm -mx-4 md:-mx-8 px-4 md:px-8 py-3">
         <div className="flex items-center">
           <button
             onClick={() => setAddTxOpen(true)}
@@ -1915,10 +1939,11 @@ const App = () => {
                 </div>
                 <button
                   onClick={signOut}
-                  className="p-2 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-rose-100 dark:hover:bg-rose-900/30 text-slate-400 hover:text-rose-500 transition-all"
+                  disabled={isSigningOut}
+                  className="p-2 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-rose-100 dark:hover:bg-rose-900/30 text-slate-400 hover:text-rose-500 transition-all disabled:opacity-50"
                   title="Sign out"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
+                  {isSigningOut ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5" />}
                 </button>
               </div>
             ) : (
@@ -2018,6 +2043,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
             )}
           </div>
           </div>
+        </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
