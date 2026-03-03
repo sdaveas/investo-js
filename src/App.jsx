@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, ReferenceDot,
@@ -492,6 +492,7 @@ const App = () => {
   const statsRef = useRef(null);
   const tableRef = useRef(null);
   const overviewRef = useRef(null);
+  const historyRef = useRef(null);
   const [overviewHeight, setOverviewHeight] = useState(0);
   const [statsHeight, setStatsHeight] = useState(0);
   const statsOpenHeightRef = useRef(0);
@@ -520,6 +521,37 @@ const App = () => {
     obs.observe(el);
     return () => obs.disconnect();
   }, [statsOpen]);
+
+  // Snap neighboring panels to same height when within threshold
+  const SNAP_THRESHOLD = 150; // px
+  useLayoutEffect(() => {
+    if (!sidebarOpen || transactions.length === 0) return;
+    const els = [overviewRef.current, chartRef.current, historyRef.current, statsRef.current];
+    // Clear previous snap
+    els.forEach(el => { if (el) el.style.minHeight = ''; });
+    // Row 1: Overview ↔ Chart
+    if (overviewOpen && chartsOpen && els[0] && els[1]) {
+      const oh = els[0].offsetHeight;
+      const ch = els[1].offsetHeight;
+      const diff = Math.abs(oh - ch);
+      if (diff > 0 && diff <= SNAP_THRESHOLD) {
+        const target = Math.max(oh, ch) + 'px';
+        els[0].style.minHeight = target;
+        els[1].style.minHeight = target;
+      }
+    }
+    // Row 2: History ↔ Stats
+    if (historyOpen && statsOpen && els[2] && els[3]) {
+      const hh = els[2].offsetHeight;
+      const sh = els[3].offsetHeight;
+      const diff = Math.abs(hh - sh);
+      if (diff > 0 && diff <= SNAP_THRESHOLD) {
+        const target = Math.max(hh, sh) + 'px';
+        els[2].style.minHeight = target;
+        els[3].style.minHeight = target;
+      }
+    }
+  });
 
   // ─── Derived ───────────────────────────────────────────────────────────────
 
@@ -2093,7 +2125,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
 
             {/* History */}
             {(selectedTickers.length > 0 || hasCashTx) && (
-            <div className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col" style={historyOpen ? { height: sidebarOpen && statsOpen && statsHeight > 0 ? statsHeight : undefined, maxHeight: statsOpenHeightRef.current > 0 ? statsOpenHeightRef.current : '60vh', overflow: 'hidden' } : undefined}>
+            <div ref={historyRef} className="bg-white dark:bg-slate-800 p-4 sm:p-6 rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col" style={historyOpen ? { maxHeight: statsOpenHeightRef.current > 0 ? statsOpenHeightRef.current : '50vh', overflow: 'hidden' } : undefined}>
               <button onClick={() => setHistoryOpen(v => !v)} className={`w-full flex items-center justify-between ${historyOpen ? 'mb-4' : ''}`}>
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
                   <History className="w-4 h-4" /> History
@@ -2238,7 +2270,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
             )}
 
             {/* Chart */}
-            {transactions.length > 0 && <div ref={chartRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 ${chartsOpen ? 'md:p-8' : ''} rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 ${chartsOpen && !(sidebarOpen && overviewOpen && overviewHeight > 0) ? 'h-[380px] sm:h-[450px] md:h-[550px]' : ''} flex flex-col overflow-hidden relative`} style={chartsOpen && sidebarOpen && overviewOpen && overviewHeight > 0 ? { height: overviewHeight } : undefined}>
+            {transactions.length > 0 && <div ref={chartRef} className={`bg-white dark:bg-slate-800 p-4 sm:p-6 ${chartsOpen ? 'md:p-8' : ''} rounded-2xl sm:rounded-[2.5rem] shadow-sm border border-slate-200 dark:border-slate-700 ${chartsOpen ? 'h-[380px] sm:h-[450px] md:h-[550px]' : ''} flex flex-col overflow-hidden relative`}>
               <button onClick={() => setChartsOpen(v => !v)} className="w-full flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 flex items-center gap-2">
                   <BarChart3 className="w-4 h-4" /> Graphs
