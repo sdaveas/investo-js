@@ -1038,7 +1038,7 @@ const App = () => {
         newAssets[row.ticker] = { name: row.name, color };
         if (row.ticker !== CASH_TICKER) colorIdx.current++;
       }
-      const importedTx = { id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date };
+      const importedTx = { id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: displayCurrency };
       if (row.price) importedTx.price = row.price;
       newTxs.push(importedTx);
     });
@@ -1046,7 +1046,7 @@ const App = () => {
     setTransactions((prev) => [...prev, ...newTxs]);
     setImportText('');
     setModalMode(null);
-  }, [importParsed, selectedAssets]);
+  }, [importParsed, selectedAssets, displayCurrency]);
 
   const exportCSV = useCallback(() => {
     const headers = 'Date,Asset,Name,Action,Amount,Price';
