@@ -499,6 +499,7 @@ const App = () => {
 
   const colorIdx = useRef(savedPortfolio?.colorIdx || 0);
   const fetchedRangesRef = useRef({});  // { ticker: startDate } — tracks what we've already fetched
+  const livePriceCacheRef = useRef(null);
 
   // Track overview panel height for chart sync
   useEffect(() => {
@@ -685,25 +686,69 @@ const App = () => {
     setEditingTx(null);
   }, []);
 
+  // Resolve shares from a monetary amount: convert to native currency, divide by native price
+  // Uses livePriceCacheRef to avoid hook ordering issues (only called from event handlers)
+  const resolveShares = useCallback((ticker, amount, date, priceOverride = null) => {
+    const cache = livePriceCacheRef.current;
+    // Get native price on the date
+    const nativePrice = priceOverride || cache?.[ticker]?.findLast(p => p.date <= date)?.price;
+    if (!nativePrice || nativePrice <= 0) return null;
+    // Convert the entered amount (in displayCurrency) to the asset's native currency
+    const native = assetCurrencies[ticker];
+    let nativeAmount = amount;
+    if (native && native !== displayCurrency) {
+      let rate = null;
+      for (const entry of exchangeRates) {
+        if (entry.date <= date) rate = entry.rate;
+        else break;
+      }
+      if (rate != null) {
+        if (displayCurrency === 'EUR' && native === 'USD') nativeAmount = amount * rate;
+        else if (displayCurrency === 'USD' && native === 'EUR') nativeAmount = amount / rate;
+      }
+    }
+    return { shares: nativeAmount / nativePrice, priceAtEntry: nativePrice };
+  }, [assetCurrencies, displayCurrency, exchangeRates]);
+
   const openEditModal = useCallback((tx) => {
     setEditingTx(tx);
-    // Ensure amount is always a number
-    const amount = typeof tx.amount === 'number' ? tx.amount : Number(tx.amount) || 0;
+    // For shares-based txs, compute display amount from shares * priceAtEntry * exchange rate
+    let amount;
+    if (tx.shares != null && tx.priceAtEntry != null && tx.ticker !== CASH_TICKER) {
+      // Show the display-currency equivalent
+      const native = assetCurrencies[tx.ticker];
+      let rate = 1;
+      if (native && native !== displayCurrency) {
+        for (const entry of exchangeRates) {
+          if (entry.date <= tx.date) rate = entry.rate;
+          else break;
+        }
+        if (native === 'USD' && displayCurrency === 'EUR') rate = 1 / rate;
+        // if native === 'EUR' && displayCurrency === 'USD', rate is already EURUSD
+      }
+      amount = Math.round(tx.shares * tx.priceAtEntry * rate * 100) / 100;
+    } else {
+      amount = typeof tx.amount === 'number' ? tx.amount : Number(tx.amount) || 0;
+    }
     setModalAmount(amount);
     // Ensure date is always a string
     const date = typeof tx.date === 'string' ? tx.date : String(tx.date || TODAY);
     setModalDate(date);
-    setModalPrice(tx.price || null);
+    setModalPrice(tx.priceAtEntry || tx.price || null);
     setModalInputMode('amount');
-    // Pre-compute shares from amount / price
+    // Pre-compute shares
     let shares = '';
     if (tx.ticker !== CASH_TICKER) {
-      const price = tx.price || priceCache?.[tx.ticker]?.findLast(p => p.date <= tx.date)?.price;
-      if (price && price > 0) shares = String(Math.round((amount / price) * 10000) / 10000);
+      if (tx.shares != null) {
+        shares = String(Math.round(tx.shares * 10000) / 10000);
+      } else {
+        const price = tx.price || priceCache?.[tx.ticker]?.findLast(p => p.date <= tx.date)?.price;
+        if (price && price > 0) shares = String(Math.round((amount / price) * 10000) / 10000);
+      }
     }
     setModalShares(shares);
     setModalMode('edit');
-  }, [priceCache]);
+  }, [priceCache, assetCurrencies, displayCurrency, exchangeRates]);
 
   const saveEdit = useCallback((overrideAmount = null, overrideDate = null, overridePrice = null) => {
     if (!editingTx) return;
@@ -719,6 +764,14 @@ const App = () => {
     setTransactions((prev) =>
       prev.map((tx) => {
         if (tx.id !== editingTx.id) return tx;
+        // For non-cash txs, recompute shares
+        if (tx.ticker !== CASH_TICKER) {
+          const resolved = resolveShares(tx.ticker, amountToSave, dateToSave, priceToSave || null);
+          if (resolved) {
+            return { id: tx.id, ticker: tx.ticker, type: tx.type, shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: dateToSave };
+          }
+        }
+        // Cash tx or fallback
         const updated = { ...tx, amount: amountToSave, date: dateToSave };
         if (priceToSave) updated.price = priceToSave;
         else delete updated.price;
@@ -726,7 +779,7 @@ const App = () => {
       }),
     );
     closeModal();
-  }, [editingTx, modalAmount, modalDate, modalPrice, closeModal]);
+  }, [editingTx, modalAmount, modalDate, modalPrice, closeModal, resolveShares]);
 
   // ─── Transaction actions ───────────────────────────────────────────────────
 
@@ -741,20 +794,26 @@ const App = () => {
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
       ? modalAmount 
       : DEFAULT_AMOUNT;
-    const tx = { id: nextTxId++, ticker, type: 'buy', amount: validAmount, date: modalDate, currency: displayCurrency };
-    if (modalPrice) tx.price = modalPrice;
+    const resolved = resolveShares(ticker, validAmount, modalDate, modalPrice || null);
+    const tx = resolved
+      ? { id: nextTxId++, ticker, type: 'buy', shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: modalDate }
+      : { id: nextTxId++, ticker, type: 'buy', amount: validAmount, date: modalDate, currency: displayCurrency };
+    if (modalPrice && !resolved) tx.price = modalPrice;
     setTransactions((prev) => [...prev, tx]);
-  }, [modalAmount, modalDate, modalPrice, selectedAssets, displayCurrency]);
+  }, [modalAmount, modalDate, modalPrice, selectedAssets, displayCurrency, resolveShares]);
 
   const addSell = useCallback((ticker) => {
     // Ensure amount is a valid number
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
       ? modalAmount 
       : DEFAULT_AMOUNT;
-    const tx = { id: nextTxId++, ticker, type: 'sell', amount: validAmount, date: modalDate, currency: displayCurrency };
-    if (modalPrice) tx.price = modalPrice;
+    const resolved = resolveShares(ticker, validAmount, modalDate, modalPrice || null);
+    const tx = resolved
+      ? { id: nextTxId++, ticker, type: 'sell', shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: modalDate }
+      : { id: nextTxId++, ticker, type: 'sell', amount: validAmount, date: modalDate, currency: displayCurrency };
+    if (modalPrice && !resolved) tx.price = modalPrice;
     setTransactions((prev) => [...prev, tx]);
-  }, [modalAmount, modalDate, modalPrice, displayCurrency]);
+  }, [modalAmount, modalDate, modalPrice, displayCurrency, resolveShares]);
 
   const addCashTx = useCallback((type) => {
     if (!selectedAssets[CASH_TICKER]) {
@@ -833,7 +892,11 @@ const App = () => {
           const available = entry?.[ticker] ?? 0;
           if (available > 0) txAmount = parsed.sellFraction ? Math.round(available * parsed.sellFraction) : available;
         }
-        const resolved = { ticker, name: matchName, type: parsed.type, amount: txAmount, date: parsed.date || TODAY, currency: displayCurrency };
+        const txDate = parsed.date || TODAY;
+        const sharesResolved = resolveShares(ticker, txAmount, txDate);
+        const resolved = sharesResolved
+          ? { ticker, name: matchName, type: parsed.type, shares: sharesResolved.shares, priceAtEntry: sharesResolved.priceAtEntry, date: txDate }
+          : { ticker, name: matchName, type: parsed.type, amount: txAmount, date: txDate, currency: displayCurrency };
         if (quickAddVerify) {
           setQuickAddPreview(resolved);
           setQuickAddStatus(null);
@@ -945,14 +1008,11 @@ const App = () => {
         }
       }
 
-      const resolved = {
-        ticker,
-        name: matchName,
-        type: parsed.type,
-        amount: txAmount,
-        date: parsed.date || TODAY,
-        currency: displayCurrency,
-      };
+      const txDate = parsed.date || TODAY;
+      const sharesResolved = resolveShares(ticker, txAmount, txDate);
+      const resolved = sharesResolved
+        ? { ticker, name: matchName, type: parsed.type, shares: sharesResolved.shares, priceAtEntry: sharesResolved.priceAtEntry, date: txDate }
+        : { ticker, name: matchName, type: parsed.type, amount: txAmount, date: txDate, currency: displayCurrency };
 
       if (quickAddVerify) {
         setQuickAddPreview(resolved);
@@ -972,17 +1032,18 @@ const App = () => {
       setQuickAddStatus(`error:${error.message || 'Could not understand. Please try again.'}`);
       setTimeout(() => setQuickAddStatus(null), 3000);
     }
-  }, [quickAddText, selectedAssets, chartData, quickAddVerify, supabase, displayCurrency]);
+  }, [quickAddText, selectedAssets, chartData, quickAddVerify, supabase, displayCurrency, resolveShares]);
 
   const confirmQuickAdd = useCallback(() => {
     if (!quickAddPreview) return;
-    const { ticker, name, type, amount, date, currency } = quickAddPreview;
+    const { ticker, name, ...rest } = quickAddPreview;
     if (!selectedAssets[ticker]) {
       const color = COLORS[colorIdx.current % COLORS.length];
       colorIdx.current++;
       setSelectedAssets((prev) => ({ ...prev, [ticker]: { name, color } }));
     }
-    setTransactions((prev) => [...prev, { id: nextTxId++, ticker, type, amount, date, currency }]);
+    // Preview already has shares/priceAtEntry or amount/currency — use as-is
+    setTransactions((prev) => [...prev, { id: nextTxId++, ticker, ...rest }]);
     setQuickAddText('');
     setQuickAddPreview(null);
   }, [quickAddPreview, selectedAssets]);
@@ -1038,23 +1099,36 @@ const App = () => {
         newAssets[row.ticker] = { name: row.name, color };
         if (row.ticker !== CASH_TICKER) colorIdx.current++;
       }
-      const importedTx = { id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: displayCurrency };
-      if (row.price) importedTx.price = row.price;
-      newTxs.push(importedTx);
+      if (row.ticker !== CASH_TICKER) {
+        // Resolve shares at import time if we have price data
+        const resolved = resolveShares(row.ticker, row.amount, row.date, row.price || null);
+        if (resolved) {
+          newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: row.date });
+        } else {
+          // No price data yet — store as amount-based; simulation fallback handles it
+          const importedTx = { id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: displayCurrency };
+          if (row.price) importedTx.price = row.price;
+          newTxs.push(importedTx);
+        }
+      } else {
+        newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: displayCurrency });
+      }
     });
     setSelectedAssets(newAssets);
     setTransactions((prev) => [...prev, ...newTxs]);
     setImportText('');
     setModalMode(null);
-  }, [importParsed, selectedAssets, displayCurrency]);
+  }, [importParsed, selectedAssets, displayCurrency, resolveShares]);
 
   const exportCSV = useCallback(() => {
-    const headers = 'Date,Asset,Name,Action,Amount,Price';
+    const headers = 'Date,Asset,Name,Action,Shares,Amount';
     const rows = transactions.map((tx) => {
       const isCash = tx.ticker === CASH_TICKER;
       const name = isCash ? 'Bank Account' : (selectedAssets[tx.ticker]?.name || tx.ticker).replace(/,/g, ' ');
       const ticker = isCash ? 'CASH' : tx.ticker;
-      return `${tx.date},${ticker},${name},${tx.type},${tx.amount},${tx.price || ''}`;
+      const shares = tx.shares != null ? tx.shares : '';
+      const amount = tx.amount != null ? tx.amount : '';
+      return `${tx.date},${ticker},${name},${tx.type},${shares},${amount}`;
     });
     const csv = [headers, ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -1100,12 +1174,14 @@ const App = () => {
       const visTxs = transactions.filter(tx => !hiddenAssets.has(tx.ticker));
       const lastPoint = chartData[chartData.length - 1];
       const visibleStockTickers = [...new Set(visTxs.filter(tx => tx.ticker !== CASH_TICKER).map(tx => tx.ticker))];
-      const stockBuys = visTxs.reduce((s, tx) => s + (tx.type === 'buy' ? tx.amount : 0), 0);
-      const stockSells = visTxs.reduce((s, tx) => s + (tx.type === 'sell' ? tx.amount : 0), 0);
+      // Compute amounts: for shares-based txs, use shares * priceAtEntry; for others, use amount
+      const getTxAmt = (tx) => (tx.shares != null && tx.priceAtEntry != null) ? tx.shares * tx.priceAtEntry : (tx.amount || 0);
+      const stockBuys = visTxs.reduce((s, tx) => s + (tx.type === 'buy' ? getTxAmt(tx) : 0), 0);
+      const stockSells = visTxs.reduce((s, tx) => s + (tx.type === 'sell' ? getTxAmt(tx) : 0), 0);
       const stockValue = visibleStockTickers.reduce((s, t) => s + (lastPoint?.[t] ?? 0), 0);
       const stockReturn = stockValue + stockSells - stockBuys;
-      const bankDeposited = visTxs.reduce((s, tx) => s + (tx.type === 'deposit' ? tx.amount : 0), 0);
-      const bankWithdrawn = visTxs.reduce((s, tx) => s + (tx.type === 'withdraw' ? tx.amount : 0), 0);
+      const bankDeposited = visTxs.reduce((s, tx) => s + (tx.type === 'deposit' ? getTxAmt(tx) : 0), 0);
+      const bankWithdrawn = visTxs.reduce((s, tx) => s + (tx.type === 'withdraw' ? getTxAmt(tx) : 0), 0);
       const bankBalance = bankDeposited - bankWithdrawn;
       const netWorth = stockValue + bankBalance;
 
@@ -1238,12 +1314,15 @@ const App = () => {
           id: typeof tx.id === 'number' ? tx.id : Number(tx.id),
           ticker: String(tx.ticker || ''),
           type: String(tx.type || 'buy'),
-          amount: typeof tx.amount === 'number' ? tx.amount : Number(tx.amount) || 0,
           date: String(tx.date || TODAY)
         };
-        if (tx.price != null && typeof tx.price === 'number') {
-          clean.price = tx.price;
-        }
+        // Shares-based model (stocks)
+        if (tx.shares != null) clean.shares = Number(tx.shares);
+        if (tx.priceAtEntry != null) clean.priceAtEntry = Number(tx.priceAtEntry);
+        // Legacy / cash model
+        if (tx.amount != null) clean.amount = typeof tx.amount === 'number' ? tx.amount : Number(tx.amount) || 0;
+        if (tx.currency) clean.currency = tx.currency;
+        if (tx.price != null && typeof tx.price === 'number') clean.price = tx.price;
         return clean;
       });
       
@@ -1274,13 +1353,16 @@ const App = () => {
       // Try to save with minimal data as fallback
       try {
         const minimalData = {
-          transactions: transactions.map(({ id, ticker, type, amount, date, price }) => ({
-            id: Number(id),
-            ticker: String(ticker),
-            type: String(type),
-            amount: Number(amount),
-            date: String(date),
-            ...(price != null && { price: Number(price) })
+          transactions: transactions.map((tx) => ({
+            id: Number(tx.id),
+            ticker: String(tx.ticker),
+            type: String(tx.type),
+            date: String(tx.date),
+            ...(tx.shares != null && { shares: Number(tx.shares) }),
+            ...(tx.priceAtEntry != null && { priceAtEntry: Number(tx.priceAtEntry) }),
+            ...(tx.amount != null && { amount: Number(tx.amount) }),
+            ...(tx.currency && { currency: tx.currency }),
+            ...(tx.price != null && { price: Number(tx.price) })
           })),
           selectedAssets: {},
           colorIdx: 0,
@@ -1524,25 +1606,9 @@ const App = () => {
     }
     return merged;
   }, [priceCache, liveQuotes]);
+  livePriceCacheRef.current = livePriceCache;
 
-  // Helper: convert a transaction amount from its stored currency to the asset's native currency for simulation
-  const toNativeAmount = useCallback((tx) => {
-    if (tx.ticker === CASH_TICKER || !tx.currency) return tx;
-    const native = assetCurrencies[tx.ticker];
-    if (!native || tx.currency === native) return tx;
-    let rate = null;
-    for (const entry of exchangeRates) {
-      if (entry.date <= tx.date) rate = entry.rate;
-      else break;
-    }
-    if (rate == null) return tx;
-    let mult = 1;
-    if (tx.currency === 'EUR' && native === 'USD') mult = rate;
-    else if (tx.currency === 'USD' && native === 'EUR') mult = 1 / rate;
-    return { ...tx, amount: tx.amount * mult };
-  }, [assetCurrencies, exchangeRates]);
-
-  // ─── Recompute chart ──────────────────────────────────────────────────────
+  // ─── Recompute chart
 
   useEffect(() => {
     if (!livePriceCache || visibleTransactions.length === 0) {
@@ -1554,9 +1620,7 @@ const App = () => {
     const activeTx = visibleTransactions.filter((tx) => livePriceCache[tx.ticker]?.length > 0);
     if (activeTx.length === 0) { setChartData([]); setStats([]); return; }
 
-    // Convert amounts from stored currency to asset's native currency for correct simulation
-    const nativeActiveTx = activeTx.map(toNativeAmount);
-    const data = simulate(livePriceCache, nativeActiveTx);
+    const data = simulate(livePriceCache, activeTx);
     setChartData(data);
 
     // Compute stats for visible transactions (for correct Combined total)
@@ -1567,20 +1631,19 @@ const App = () => {
     const colors = Object.fromEntries(
       Object.entries(selectedAssets).map(([t, a]) => [t, a.color]),
     );
-    const visibleStats = computeStats(data, tickers, nativeActiveTx, names, colors);
+    const visibleStats = computeStats(data, tickers, activeTx, names, colors);
 
     // Also compute stats for hidden assets to show in Stats section
     const hiddenTx = transactions.filter((tx) => hiddenAssets.has(tx.ticker) && livePriceCache[tx.ticker]?.length > 0);
     if (hiddenTx.length > 0) {
-      const nativeHiddenTx = hiddenTx.map(toNativeAmount);
-      const hiddenData = simulate(livePriceCache, nativeHiddenTx);
+      const hiddenData = simulate(livePriceCache, hiddenTx);
       const hiddenTickers = [...new Set(hiddenTx.map((tx) => tx.ticker))];
-      const hiddenStats = computeStats(hiddenData, hiddenTickers, nativeHiddenTx, names, colors).filter((s) => !s.isPortfolio);
+      const hiddenStats = computeStats(hiddenData, hiddenTickers, hiddenTx, names, colors).filter((s) => !s.isPortfolio);
       setStats([...visibleStats, ...hiddenStats]);
     } else {
       setStats(visibleStats);
     }
-  }, [livePriceCache, visibleTransactions, transactions, selectedAssets, toNativeAmount]);
+  }, [livePriceCache, visibleTransactions, transactions, selectedAssets, hiddenAssets]);
 
   // ─── Currency conversion layer ────────────────────────────────────────────
 
@@ -1613,8 +1676,16 @@ const App = () => {
     return 1; // unsupported pair
   }, [displayCurrency, exchangeRates]);
 
-  // Convert a transaction amount from its stored currency to display currency
+  // Convert a transaction to its display-currency monetary value
   const convertTxAmount = useCallback((tx) => {
+    // Shares-based stock tx: shares * priceAtEntry gives native-currency amount, then convert
+    if (tx.shares != null && tx.priceAtEntry != null && tx.ticker !== CASH_TICKER) {
+      const nativeAmount = tx.shares * tx.priceAtEntry;
+      const native = assetCurrencies[tx.ticker];
+      if (!native || native === displayCurrency) return nativeAmount;
+      return nativeAmount * getConversionRate(native, tx.date);
+    }
+    // Legacy amount-based tx or cash tx
     const storedCurrency = tx.currency || (tx.ticker === CASH_TICKER ? bankCurrency : assetCurrencies[tx.ticker]);
     if (!storedCurrency || storedCurrency === displayCurrency) return tx.amount;
     return tx.amount * getConversionRate(storedCurrency, tx.date);
@@ -1696,9 +1767,7 @@ const App = () => {
     // Also compute hidden asset stats
     const hiddenTx = transactions.filter((tx) => hiddenAssets.has(tx.ticker) && livePriceCache?.[tx.ticker]?.length > 0);
     if (hiddenTx.length > 0) {
-      // Build converted hidden chart data
-      const nativeHiddenTx = hiddenTx.map(toNativeAmount);
-      const hiddenRaw = simulate(livePriceCache, nativeHiddenTx);
+      const hiddenRaw = simulate(livePriceCache, hiddenTx);
       const hiddenConverted = !needsConversion ? hiddenRaw : hiddenRaw.map((point) => {
         const cp = { date: point.date };
         for (const key of Object.keys(point)) {
@@ -1723,7 +1792,7 @@ const App = () => {
       return [...visibleStats, ...hiddenStats];
     }
     return visibleStats;
-  }, [needsConversion, convertedChartData, stats, visibleTransactions, transactions, selectedAssets, hiddenAssets, livePriceCache, assetCurrencies, displayCurrency, exchangeRateMap, convertTxAmount, toNativeAmount]);
+  }, [needsConversion, convertedChartData, stats, visibleTransactions, transactions, selectedAssets, hiddenAssets, livePriceCache, assetCurrencies, displayCurrency, exchangeRateMap, convertTxAmount, bankCurrency]);
 
   // Extract current share counts from raw chart data (units don't depend on currency)
   const currentShares = useMemo(() => {
@@ -2205,7 +2274,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       {txs.map((tx) => (
                         <div key={tx.id} onClick={() => openEditModal(tx)} className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer transition-all hover:brightness-125 ${tx.type === 'buy' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400'}`}>
                           <span className="uppercase text-[10px] font-black w-8">{tx.type}</span>
-                          <span className="flex-1 text-slate-700 dark:text-slate-300">{formatCurrency(convertTxAmount(tx))}{tx.price ? <span className="text-slate-400 ml-1">@{getCurrencySymbol(assetCurrencies[tx.ticker] || displayCurrency)}{tx.price}</span> : ''}</span>
+                          <span className="flex-1 text-slate-700 dark:text-slate-300">{formatCurrency(convertTxAmount(tx))}{tx.shares != null ? <span className="text-slate-400 ml-1">{Math.round(tx.shares * 10000) / 10000} sh</span> : ''}{tx.priceAtEntry ? <span className="text-slate-400 ml-1">@{getCurrencySymbol(assetCurrencies[tx.ticker] || displayCurrency)}{Math.round(tx.priceAtEntry * 100) / 100}</span> : tx.price ? <span className="text-slate-400 ml-1">@{getCurrencySymbol(assetCurrencies[tx.ticker] || displayCurrency)}{tx.price}</span> : ''}</span>
                           <span className="text-slate-400 text-[10px]">{formatShortDate(tx.date)}</span>
                           <button onClick={(e) => { e.stopPropagation(); removeTx(tx.id); }} className="text-slate-300 dark:text-slate-600 hover:text-rose-400 p-0.5 transition-colors">
                             <Trash2 className="w-3 h-3" />
@@ -2494,7 +2563,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
                           itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
                           formatter={(v, n) => [formatCurrency(v), n]}
-                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })} />
                         <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', color: dark ? '#94a3b8' : undefined }} onClick={handleLegendClick} />
                         {nwTickers.length > 1 && (
                           <Line type="monotone" dataKey="Total Portfolio" stroke={dark ? '#e2e8f0' : '#3b82f6'} strokeWidth={2} dot={false} hide={hiddenSeries.has('Total Portfolio')} />
@@ -2563,7 +2632,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
                           itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
                           formatter={(v) => isPct ? [`${v >= 0 ? '+' : ''}${v.toFixed(2)}%`] : [`${v >= 0 ? '+' : ''}${formatCurrency(v)}`]}
-                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })} />
                         <ReferenceLine y={0} stroke={dark ? '#475569' : '#cbd5e1'} strokeWidth={1} />
                         <Area type="monotone" dataKey={dataKey} stroke="#3b82f6" strokeWidth={1.5} dot={false} fill="none" />
                       </AreaChart>
@@ -2589,7 +2658,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
                           itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
                           formatter={(v, n) => [formatCurrency(v), n]}
-                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })} />
                         <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', color: dark ? '#94a3b8' : undefined }} onClick={handleLegendClick} />
                         {chartTickers.map((ticker) => {
                           const asset = selectedAssets[ticker];
@@ -2753,7 +2822,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
                           itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
                           formatter={(v) => [formatCurrency(v)]}
-                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })} />
                         <Legend iconType="circle" wrapperStyle={{ paddingTop: '30px', fontSize: '11px', fontWeight: 'bold', color: dark ? '#94a3b8' : undefined }} />
                         <Area type="monotone" dataKey="Portfolio Value" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} strokeWidth={1.5} dot={false} />
                         <Area type="stepAfter" dataKey="Net Invested" stroke="#94a3b8" fill="#94a3b8" fillOpacity={0.08} strokeWidth={1.5} strokeDasharray="5 5" dot={false} />
@@ -2823,7 +2892,7 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                           contentStyle={{ borderRadius: '24px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.25)', padding: '20px', backgroundColor: dark ? '#1e293b' : '#fff', color: dark ? '#e2e8f0' : undefined }}
                           itemStyle={{ fontSize: '11px', fontWeight: 'bold' }}
                           formatter={(v) => [formatCurrency(v), 'Bank Balance']}
-                          labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long' })} />
+labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })} />
                         <Area type="stepAfter" dataKey={CASH_TICKER} name="Bank Balance" stroke={bankColor} fill={bankColor} fillOpacity={0.12} strokeWidth={1.5} dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -3024,16 +3093,20 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm">{formatCurrency(stat.totalWithdrawals)}</td>
                       <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-black text-sm text-blue-600 dark:text-blue-400">{formatCurrency(stat.finalValue)}</td>
                       <td className="px-4 sm:px-8 py-4 sm:py-6 text-right">
-                        <span className={`font-black text-sm ${(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          {(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits)}
-                          {stat.totalDeposits > 0 ? (
-                            <span className="text-xs font-normal text-slate-400 ml-1">({(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatPercent((stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) / stat.totalDeposits)})</span>
-                          ) : (
-                            <span className="text-xs font-normal text-slate-400 ml-1">(—)</span>
-                          )}
-                        </span>
+                        {stat.ticker === CASH_TICKER ? (
+                          <span className="font-bold text-sm text-slate-400">—</span>
+                        ) : (
+                          <span className={`font-black text-sm ${(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatCurrency(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits)}
+                            {stat.totalDeposits > 0 ? (
+                              <span className="text-xs font-normal text-slate-400 ml-1">({(stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) >= 0 ? '+' : ''}{formatPercent((stat.finalValue + stat.totalWithdrawals - stat.totalDeposits) / stat.totalDeposits)})</span>
+                            ) : (
+                              <span className="text-xs font-normal text-slate-400 ml-1">(—)</span>
+                            )}
+                          </span>
+                        )}
                       </td>
-                      <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm text-slate-500 dark:text-slate-400">{formatPercent(stat.annualizedReturn)}</td>
+                      <td className="px-4 sm:px-8 py-4 sm:py-6 text-right font-bold text-sm text-slate-500 dark:text-slate-400">{stat.ticker === CASH_TICKER ? '—' : formatPercent(stat.annualizedReturn)}</td>
                     </tr>
                   ))}
                   {convertedStats.find((s) => s.isPortfolio) && (() => {

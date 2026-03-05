@@ -1,13 +1,18 @@
 /**
  * Portfolio simulation using real historical prices.
- * Supports multiple buy/sell transactions per asset.
- * transactions: [{ id, ticker, type: 'buy'|'sell'|'deposit'|'withdraw', amount, date, price? }]
- * When tx.price is provided, it is used instead of the day's closing price for unit calculation.
+ * Stock txs: { shares, priceAtEntry, date } — shares used directly
+ * Cash txs: { amount, date } — amount / price(=1) gives units
  * 'deposit' is treated as 'buy', 'withdraw' is treated as 'sell'.
  */
 
 const isBuyType = (type) => type === 'buy' || type === 'deposit';
 const isSellType = (type) => type === 'sell' || type === 'withdraw';
+
+// Get effective monetary amount (native currency) for a transaction
+const getTxAmount = (tx) => {
+  if (tx.shares != null && tx.priceAtEntry != null) return tx.shares * tx.priceAtEntry;
+  return tx.amount || 0;
+};
 
 export function simulate(priceData, transactions) {
   const txByTicker = {};
@@ -46,12 +51,19 @@ export function simulate(priceData, transactions) {
     let units = 0;
     const changes = [];
     txByTicker[ticker].forEach((tx) => {
-      const price = tx.price || priceMap[ticker].get(tx.date);
-      if (!price) return;
-      if (isBuyType(tx.type)) {
-        units += tx.amount / price;
+      // Stock txs have shares directly; cash txs use amount / price (price=1)
+      let delta;
+      if (tx.shares != null) {
+        delta = tx.shares;
       } else {
-        units = Math.max(0, units - tx.amount / price);
+        const price = priceMap[ticker].get(tx.date);
+        if (!price) return;
+        delta = tx.amount / price;
+      }
+      if (isBuyType(tx.type)) {
+        units += delta;
+      } else {
+        units = Math.max(0, units - delta);
       }
       changes.push({ date: tx.date, totalUnits: units });
     });
@@ -119,10 +131,11 @@ export function computeStats(chartData, tickers, transactions, assetNames, asset
     let withdrawals = 0;
     
     tickerTxs.forEach((tx) => {
+      const amt = getTxAmount(tx);
       if (isBuyType(tx.type)) {
-        deposits += tx.amount;
+        deposits += amt;
       } else {
-        withdrawals += tx.amount;
+        withdrawals += amt;
       }
     });
     
