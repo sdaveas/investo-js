@@ -1483,11 +1483,15 @@ const App = () => {
   const signOut = useCallback(async () => {
     if (!supabase) return;
     setIsSigningOut(true);
+    console.log('[signOut] started');
     // Wait for any in-flight sync to finish
     if (syncPromiseRef.current) {
+      console.log('[signOut] waiting for in-flight sync...');
       try { await syncPromiseRef.current; } catch { /* ignore */ }
+      console.log('[signOut] in-flight sync done');
     }
     // Final flush to catch any changes since last sync
+    console.log('[signOut] final flush...');
     try {
       if (user) {
         await supabase.from('portfolios').upsert({
@@ -1498,9 +1502,11 @@ const App = () => {
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id' });
       }
-    } catch { /* best effort */ }
+    } catch (e) { console.error('[signOut] flush error:', e); }
+    console.log('[signOut] flush done, signing out from auth...');
     // Sign out from auth (spinner still visible)
-    try { await supabase.auth.signOut(); } catch { /* ignore */ }
+    try { await supabase.auth.signOut(); } catch (e) { console.error('[signOut] auth signOut error:', e); }
+    console.log('[signOut] auth signOut done, clearing state...');
     // Now clear local state
     isHydratingRef.current = true;
     setUser(null);
