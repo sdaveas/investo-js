@@ -1059,8 +1059,10 @@ const App = () => {
     const tickerIdx = header.findIndex((h) => ['asset', 'ticker', 'symbol'].includes(h));
     const nameIdx = header.findIndex((h) => h === 'name');
     const actionIdx = header.findIndex((h) => ['action', 'type'].includes(h));
-    const amountIdx = header.findIndex((h) => h === 'amount');
+    const amountIdx = header.findIndex((h) => ['amount', 'quantity'].includes(h));
     const priceIdx = header.findIndex((h) => h === 'price');
+    const currencyIdx = header.findIndex((h) => h === 'currency');
+    const sharesIdx = header.findIndex((h) => h === 'shares');
     const hasHeader = dateIdx >= 0 && tickerIdx >= 0;
     const rows = [];
     for (let i = hasHeader ? 1 : 0; i < lines.length; i++) {
@@ -1069,17 +1071,23 @@ const App = () => {
       const ticker = (cols[hasHeader ? tickerIdx : 1] || '').toUpperCase();
       const name = hasHeader && nameIdx >= 0 ? cols[nameIdx] : '';
       const action = (cols[hasHeader ? actionIdx : 2] || '').toLowerCase();
-      const amount = parseFloat(cols[hasHeader ? amountIdx : 3]);
+      // Support both "Quantity" (unified) and legacy "Amount"/"Shares" columns
+      const qty = parseFloat(cols[hasHeader ? amountIdx : 3]);
+      const shares = hasHeader && sharesIdx >= 0 ? parseFloat(cols[sharesIdx]) : NaN;
       const price = hasHeader && priceIdx >= 0 ? parseFloat(cols[priceIdx]) : NaN;
       const isCashAction = action === 'deposit' || action === 'withdraw';
+      const amount = !isNaN(shares) && shares > 0 ? shares : qty;
       if (date && (isCashAction || (ticker && (action === 'buy' || action === 'sell'))) && amount > 0) {
+        const currency = hasHeader && currencyIdx >= 0 ? cols[currencyIdx] : '';
         const row = {
           date,
           ticker: isCashAction ? CASH_TICKER : ticker,
           name: isCashAction ? 'Bank Account' : (name || ticker),
           type: action,
           amount,
+          isShares: !isCashAction, // stock rows are share counts, cash rows are currency amounts
         };
+        if (currency) row.currency = currency;
         if (!isNaN(price) && price > 0) row.price = price;
         rows.push(row);
       }
@@ -1100,18 +1108,24 @@ const App = () => {
         if (row.ticker !== CASH_TICKER) colorIdx.current++;
       }
       if (row.ticker !== CASH_TICKER) {
-        // Resolve shares at import time if we have price data
-        const resolved = resolveShares(row.ticker, row.amount, row.date, row.price || null);
-        if (resolved) {
-          newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: row.date });
+        if (row.isShares) {
+          // Import has share count directly — look up entry price from cache
+          const cache = livePriceCacheRef.current;
+          const entryPrice = row.price || cache?.[row.ticker]?.findLast(p => p.date <= row.date)?.price;
+          newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, shares: row.amount, priceAtEntry: entryPrice || 0, date: row.date });
         } else {
-          // No price data yet — store as amount-based; simulation fallback handles it
-          const importedTx = { id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: displayCurrency };
-          if (row.price) importedTx.price = row.price;
-          newTxs.push(importedTx);
+          // Legacy import with monetary amount — resolve to shares
+          const resolved = resolveShares(row.ticker, row.amount, row.date, row.price || null);
+          if (resolved) {
+            newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: row.date });
+          } else {
+            const importedTx = { id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: displayCurrency };
+            if (row.price) importedTx.price = row.price;
+            newTxs.push(importedTx);
+          }
         }
       } else {
-        newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: displayCurrency });
+        newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: row.currency || displayCurrency });
       }
     });
     setSelectedAssets(newAssets);
@@ -1121,14 +1135,16 @@ const App = () => {
   }, [importParsed, selectedAssets, displayCurrency, resolveShares]);
 
   const exportCSV = useCallback(() => {
-    const headers = 'Date,Asset,Name,Action,Shares,Amount';
+    const headers = 'Date,Asset,Name,Action,Quantity,Currency';
     const rows = transactions.map((tx) => {
       const isCash = tx.ticker === CASH_TICKER;
       const name = isCash ? 'Bank Account' : (selectedAssets[tx.ticker]?.name || tx.ticker).replace(/,/g, ' ');
       const ticker = isCash ? 'CASH' : tx.ticker;
-      const shares = tx.shares != null ? tx.shares : '';
-      const amount = tx.amount != null ? tx.amount : '';
-      return `${tx.date},${ticker},${name},${tx.type},${shares},${amount}`;
+      // Quantity: shares for stocks, amount for cash
+      const quantity = tx.shares != null ? tx.shares : (tx.amount != null ? tx.amount : '');
+      // Currency: tx.currency for cash, native asset currency for stocks
+      const currency = isCash ? (tx.currency || '') : (assetCurrencies[tx.ticker] || '');
+      return `${tx.date},${ticker},${name},${tx.type},${quantity},${currency}`;
     });
     const csv = [headers, ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -1138,7 +1154,7 @@ const App = () => {
     a.download = 'what-i-have-transactions.csv';
     a.click();
     URL.revokeObjectURL(url);
-  }, [transactions, selectedAssets]);
+  }, [transactions, selectedAssets, assetCurrencies]);
 
   const handleImportFile = useCallback((e) => {
     const file = e.target.files?.[0];
