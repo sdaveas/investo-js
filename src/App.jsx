@@ -1623,6 +1623,23 @@ const App = () => {
     return merged;
   }, [priceCache, liveQuotes]);
   livePriceCacheRef.current = livePriceCache;
+  // ─── Backfill missing priceAtEntry for imported shares-based transactions ─
+  useEffect(() => {
+    if (!livePriceCache) return;
+    setTransactions((prev) => {
+      let changed = false;
+      const next = prev.map((tx) => {
+        if (tx.ticker === CASH_TICKER || tx.shares == null || (tx.priceAtEntry != null && tx.priceAtEntry > 0)) return tx;
+        const prices = livePriceCache[tx.ticker];
+        if (!prices?.length) return tx;
+        const entry = prices.findLast((p) => p.date <= tx.date);
+        if (!entry || entry.price <= 0) return tx;
+        changed = true;
+        return { ...tx, priceAtEntry: entry.price };
+      });
+      return changed ? next : prev;
+    });
+  }, [livePriceCache]);
 
   // ─── Recompute chart
 
