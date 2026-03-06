@@ -20,7 +20,7 @@ import { toPng } from 'html-to-image';
 import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices, fetchExchangeRates } from './api';
 import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
-import { ensureProfile, loadUserData, upsertAsset, insertTransaction, updateTransaction, deleteTransaction, bulkInsertTransactions, updateProfile } from './db';
+import { ensureProfile, loadUserData, upsertAsset, deleteAsset, insertTransaction, updateTransaction, deleteTransaction, bulkInsertTransactions, updateProfile } from './db';
 import { Analytics } from '@vercel/analytics/react';
 
 const COLORS = [
@@ -1274,9 +1274,13 @@ const App = () => {
   }, [supabase, stats, chartData, transactions, hiddenAssets]);
 
   const removeTx = useCallback((txId) => {
-    // Clear any existing timer first
+    // Flush any pending delete to DB before starting a new undo cycle
     setUndoTimer((prev) => {
       if (prev) clearTimeout(prev);
+      return null;
+    });
+    setDeletedTx((prev) => {
+      if (prev && supabase) deleteTransaction(supabase, prev.tx.id);
       return null;
     });
     
@@ -1306,7 +1310,7 @@ const App = () => {
       }, 5000);
       setUndoTimer(timer);
       
-      // Clean up selectedAssets and fetchedRanges if ticker has no more transactions
+      // Clean up selectedAssets, fetchedRanges, and DB asset if ticker has no more transactions
       if (tickerWillBeRemoved) {
         setSelectedAssets((sa) => {
           const out = { ...sa };
@@ -1314,6 +1318,9 @@ const App = () => {
           delete fetchedRangesRef.current[txToDelete.ticker];
           return out;
         });
+        if (supabase && portfolioId) {
+          deleteAsset(supabase, portfolioId, txToDelete.ticker);
+        }
       }
       
       return next;

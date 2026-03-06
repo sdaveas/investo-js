@@ -96,6 +96,15 @@ export function upsertAsset(supabase, portfolioId, { ticker, name, color, hidden
     .then(({ error }) => { if (error) console.error('upsertAsset error:', error); });
 }
 
+export function deleteAsset(supabase, portfolioId, ticker) {
+  supabase
+    .from('assets')
+    .delete()
+    .eq('portfolio_id', portfolioId)
+    .eq('ticker', ticker)
+    .then(({ error }) => { if (error) console.error('deleteAsset error:', error); });
+}
+
 // ─── Transactions ────────────────────────────────────────────────────────────
 
 function localTxToDb(portfolioId, tx) {
