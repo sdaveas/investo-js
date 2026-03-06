@@ -1438,7 +1438,10 @@ const App = () => {
   }, [overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen, user]);
 
   // Hydrate user data from Supabase (called outside onAuthStateChange to avoid deadlock)
+  const hydratingUserRef = useRef(null);
   const hydrateFromDB = useCallback(async (u) => {
+    if (hydratingUserRef.current === u.id) return;
+    hydratingUserRef.current = u.id;
     try {
       const { profile, portfolioId: pid } = await ensureProfile(supabase, u.id);
       setPortfolioId(pid);
@@ -1477,7 +1480,10 @@ const App = () => {
         }
       }
       setTimeout(() => { isHydratingRef.current = false; }, 200);
-    } catch (e) { console.error('Auth hydration error:', e); }
+    } catch (e) {
+      hydratingUserRef.current = null;
+      console.error('Auth hydration error:', e);
+    }
   }, []);
 
   // Auth state listener — callback must be synchronous to avoid Supabase deadlock

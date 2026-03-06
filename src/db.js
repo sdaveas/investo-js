@@ -18,24 +18,30 @@ export async function ensureProfile(supabase, userId) {
     .single();
   if (pErr) throw pErr;
 
-  // Get or create default portfolio
+  // Get or create default portfolio (recheck after insert to handle races)
   let { data: portfolios } = await supabase
     .from('portfolios')
     .select('id')
     .eq('user_id', userId)
+    .order('created_at')
     .limit(1);
 
   let portfolioId;
   if (portfolios && portfolios.length > 0) {
     portfolioId = portfolios[0].id;
   } else {
-    const { data: newP, error: nErr } = await supabase
+    const { error: nErr } = await supabase
       .from('portfolios')
-      .insert({ user_id: userId, name: 'Default' })
+      .insert({ user_id: userId, name: 'Default' });
+    if (nErr && nErr.code !== '23505') throw nErr;
+    // Re-fetch to get the winning row in case of a race
+    const { data: refetch } = await supabase
+      .from('portfolios')
       .select('id')
-      .single();
-    if (nErr) throw nErr;
-    portfolioId = newP.id;
+      .eq('user_id', userId)
+      .order('created_at')
+      .limit(1);
+    portfolioId = refetch[0].id;
   }
 
   return { profile, portfolioId };
