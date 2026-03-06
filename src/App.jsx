@@ -796,30 +796,43 @@ const App = () => {
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
       ? modalAmount 
       : DEFAULT_AMOUNT;
-    const resolved = resolveShares(ticker, validAmount, modalDate, modalPrice || null);
-    const tx = resolved
-      ? { id: genId(), ticker, type: 'buy', shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: modalDate }
-      : { id: genId(), ticker, type: 'buy', amount: validAmount, date: modalDate, currency: displayCurrency };
-    if (modalPrice && !resolved) tx.price = modalPrice;
+    let tx;
+    const sharesNum = Number(modalShares);
+    if (modalInputMode === 'shares' && sharesNum > 0 && modalPrice > 0) {
+      // Shares mode: use the exact share count the user entered
+      tx = { id: genId(), ticker, type: 'buy', shares: sharesNum, priceAtEntry: modalPrice, date: modalDate };
+    } else {
+      const resolved = resolveShares(ticker, validAmount, modalDate, modalPrice || null);
+      tx = resolved
+        ? { id: genId(), ticker, type: 'buy', shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: modalDate }
+        : { id: genId(), ticker, type: 'buy', amount: validAmount, date: modalDate, currency: displayCurrency };
+      if (modalPrice && !resolved) tx.price = modalPrice;
+    }
     setTransactions((prev) => [...prev, tx]);
     if (supabase && portfolioId) {
       upsertAsset(supabase, portfolioId, { ticker, name, color });
       insertTransaction(supabase, portfolioId, tx);
     }
-  }, [modalAmount, modalDate, modalPrice, selectedAssets, displayCurrency, resolveShares, portfolioId]);
+  }, [modalAmount, modalDate, modalPrice, modalShares, modalInputMode, selectedAssets, displayCurrency, resolveShares, portfolioId]);
 
   const addSell = useCallback((ticker) => {
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
       ? modalAmount 
       : DEFAULT_AMOUNT;
-    const resolved = resolveShares(ticker, validAmount, modalDate, modalPrice || null);
-    const tx = resolved
-      ? { id: genId(), ticker, type: 'sell', shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: modalDate }
-      : { id: genId(), ticker, type: 'sell', amount: validAmount, date: modalDate, currency: displayCurrency };
-    if (modalPrice && !resolved) tx.price = modalPrice;
+    let tx;
+    const sharesNum = Number(modalShares);
+    if (modalInputMode === 'shares' && sharesNum > 0 && modalPrice > 0) {
+      tx = { id: genId(), ticker, type: 'sell', shares: sharesNum, priceAtEntry: modalPrice, date: modalDate };
+    } else {
+      const resolved = resolveShares(ticker, validAmount, modalDate, modalPrice || null);
+      tx = resolved
+        ? { id: genId(), ticker, type: 'sell', shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: modalDate }
+        : { id: genId(), ticker, type: 'sell', amount: validAmount, date: modalDate, currency: displayCurrency };
+      if (modalPrice && !resolved) tx.price = modalPrice;
+    }
     setTransactions((prev) => [...prev, tx]);
     if (supabase && portfolioId) insertTransaction(supabase, portfolioId, tx);
-  }, [modalAmount, modalDate, modalPrice, displayCurrency, resolveShares, portfolioId]);
+  }, [modalAmount, modalDate, modalPrice, modalShares, modalInputMode, displayCurrency, resolveShares, portfolioId]);
 
   const addCashTx = useCallback((type) => {
     if (!selectedAssets[CASH_TICKER]) {
