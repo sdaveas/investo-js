@@ -101,6 +101,7 @@ function dbTxToLocal(row) {
     type: row.type,
     date: row.date,
   };
+  if (row.portfolio_id) tx.portfolioId = row.portfolio_id;
   if (row.shares != null) tx.shares = Number(row.shares);
   if (row.price_at_entry != null) tx.priceAtEntry = Number(row.price_at_entry);
   if (row.amount != null) tx.amount = Number(row.amount);
@@ -129,6 +130,14 @@ export function updateTransaction(supabase, txId, fields) {
     .update(row)
     .eq('id', txId)
     .then(({ error }) => { if (error) console.error('updateTransaction error:', error); });
+}
+
+export function moveTransaction(supabase, txId, newPortfolioId) {
+  supabase
+    .from('transactions')
+    .update({ portfolio_id: newPortfolioId, updated_at: new Date().toISOString() })
+    .eq('id', txId)
+    .then(({ error }) => { if (error) console.error('moveTransaction error:', error); });
 }
 
 export function deleteTransaction(supabase, txId) {

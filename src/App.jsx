@@ -20,7 +20,7 @@ import { toPng } from 'html-to-image';
 import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices, fetchExchangeRates } from './api';
 import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
-import { ensureProfile, loadPortfolioData, upsertAsset, deleteAsset, insertTransaction, updateTransaction, deleteTransaction, bulkInsertTransactions, updateProfile, createPortfolio, renamePortfolio, deletePortfolio as deletePortfolioDb } from './db';
+import { ensureProfile, loadPortfolioData, upsertAsset, deleteAsset, insertTransaction, updateTransaction, moveTransaction, deleteTransaction, bulkInsertTransactions, updateProfile, createPortfolio, renamePortfolio, deletePortfolio as deletePortfolioDb } from './db';
 import { Analytics } from '@vercel/analytics/react';
 
 const COLORS = [
@@ -461,6 +461,7 @@ const App = () => {
   const [modalInputMode, setModalInputMode] = useState('amount'); // 'amount' | 'shares'
   const [modalShares, setModalShares] = useState('');
   const [editingTx, setEditingTx] = useState(null);           // tx being edited
+  const [modalPortfolioId, setModalPortfolioId] = useState(null); // per-modal portfolio override
   const [importText, setImportText] = useState('');
   const [quickAddText, setQuickAddText] = useState('');
   const [quickAddStatus, setQuickAddStatus] = useState(null); // 'processing' | 'error:msg' | null
@@ -646,8 +647,9 @@ const App = () => {
     setModalInputMode('amount');
     setModalShares('');
     setStagedAsset(null);
+    setModalPortfolioId(portfolioId);
     setModalMode('buy');
-  }, [transactions]);
+  }, [transactions, portfolioId]);
 
   const openSellModal = useCallback((preselectedTicker = null) => {
     setModalAmount(DEFAULT_AMOUNT);
@@ -656,20 +658,23 @@ const App = () => {
     setModalInputMode('amount');
     setModalShares('');
     setSellTicker(preselectedTicker);
+    setModalPortfolioId(portfolioId);
     setModalMode('sell');
-  }, []);
+  }, [portfolioId]);
 
   const openDepositModal = useCallback(() => {
     setModalAmount(DEFAULT_AMOUNT);
     setModalDate(TODAY);
+    setModalPortfolioId(portfolioId);
     setModalMode('deposit');
-  }, []);
+  }, [portfolioId]);
 
   const openWithdrawModal = useCallback(() => {
     setModalAmount(DEFAULT_AMOUNT);
     setModalDate(TODAY);
+    setModalPortfolioId(portfolioId);
     setModalMode('withdraw');
-  }, []);
+  }, [portfolioId]);
 
   const openBuyForTicker = useCallback((ticker) => {
     const asset = selectedAssets[ticker];
@@ -680,8 +685,9 @@ const App = () => {
     setModalInputMode('amount');
     setModalShares('');
     setStagedAsset({ symbol: ticker, name: asset.name });
+    setModalPortfolioId(portfolioId);
     setModalMode('buy');
-  }, [selectedAssets, transactions]);
+  }, [selectedAssets, transactions, portfolioId]);
 
   const closeModal = useCallback(() => {
     setModalMode(null);
@@ -690,6 +696,7 @@ const App = () => {
     setStagedAsset(null);
     setSellTicker(null);
     setEditingTx(null);
+    setModalPortfolioId(null);
   }, []);
 
   // Resolve shares from a monetary amount: convert to native currency, divide by native price
@@ -753,8 +760,9 @@ const App = () => {
       }
     }
     setModalShares(shares);
+    setModalPortfolioId(portfolioId);
     setModalMode('edit');
-  }, [priceCache, assetCurrencies, displayCurrency, exchangeRates]);
+  }, [priceCache, assetCurrencies, displayCurrency, exchangeRates, portfolioId]);
 
   const saveEdit = useCallback((overrideAmount = null, overrideDate = null, overridePrice = null) => {
     if (!editingTx) return;
@@ -767,6 +775,8 @@ const App = () => {
       : (editingTx.amount || DEFAULT_AMOUNT);
     const dateToSave = overrideDate !== null ? overrideDate : modalDate;
     const priceToSave = overridePrice !== null ? overridePrice : modalPrice;
+    const targetPid = modalPortfolioId || portfolioId;
+    const movingPortfolio = supabase && targetPid && editingTx.portfolioId && targetPid !== editingTx.portfolioId;
     let updatedFields = null;
     setTransactions((prev) =>
       prev.map((tx) => {
@@ -776,20 +786,30 @@ const App = () => {
           const resolved = resolveShares(tx.ticker, amountToSave, dateToSave, priceToSave || null);
           if (resolved) {
             updatedFields = { shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: dateToSave };
-            return { id: tx.id, ticker: tx.ticker, type: tx.type, ...updatedFields };
+            return { id: tx.id, ticker: tx.ticker, type: tx.type, portfolioId: targetPid, ...updatedFields };
           }
         }
         // Cash tx or fallback
         updatedFields = { amount: amountToSave, date: dateToSave };
-        const updated = { ...tx, ...updatedFields };
+        const updated = { ...tx, ...updatedFields, portfolioId: targetPid };
         if (priceToSave) updated.price = priceToSave;
         else delete updated.price;
         return updated;
       }),
     );
     if (supabase && updatedFields) updateTransaction(supabase, editingTx.id, updatedFields);
+    if (movingPortfolio) {
+      moveTransaction(supabase, editingTx.id, targetPid);
+      // Ensure the asset exists in the target portfolio
+      const asset = selectedAssets[editingTx.ticker];
+      if (asset) upsertAsset(supabase, targetPid, { ticker: editingTx.ticker, name: asset.name, color: asset.color });
+      // Remove from local state if the target portfolio isn't currently visible
+      if (!checkedPortfolioIds.has(targetPid)) {
+        setTransactions((prev) => prev.filter((tx) => tx.id !== editingTx.id));
+      }
+    }
     closeModal();
-  }, [editingTx, modalAmount, modalDate, modalPrice, closeModal, resolveShares]);
+  }, [editingTx, modalAmount, modalDate, modalPrice, closeModal, resolveShares, modalPortfolioId, portfolioId, selectedAssets, checkedPortfolioIds]);
 
   // ─── Transaction actions ───────────────────────────────────────────────────
 
@@ -816,11 +836,12 @@ const App = () => {
       if (modalPrice && !resolved) tx.price = modalPrice;
     }
     setTransactions((prev) => [...prev, tx]);
-    if (supabase && portfolioId) {
-      upsertAsset(supabase, portfolioId, { ticker, name, color });
-      insertTransaction(supabase, portfolioId, tx);
+    const pid = modalPortfolioId || portfolioId;
+    if (supabase && pid) {
+      upsertAsset(supabase, pid, { ticker, name, color });
+      insertTransaction(supabase, pid, tx);
     }
-  }, [modalAmount, modalDate, modalPrice, modalShares, modalInputMode, selectedAssets, displayCurrency, resolveShares, portfolioId]);
+  }, [modalAmount, modalDate, modalPrice, modalShares, modalInputMode, selectedAssets, displayCurrency, resolveShares, portfolioId, modalPortfolioId]);
 
   const addSell = useCallback((ticker) => {
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
@@ -838,21 +859,23 @@ const App = () => {
       if (modalPrice && !resolved) tx.price = modalPrice;
     }
     setTransactions((prev) => [...prev, tx]);
-    if (supabase && portfolioId) insertTransaction(supabase, portfolioId, tx);
-  }, [modalAmount, modalDate, modalPrice, modalShares, modalInputMode, displayCurrency, resolveShares, portfolioId]);
+    const pid = modalPortfolioId || portfolioId;
+    if (supabase && pid) insertTransaction(supabase, pid, tx);
+  }, [modalAmount, modalDate, modalPrice, modalShares, modalInputMode, displayCurrency, resolveShares, portfolioId, modalPortfolioId]);
 
   const addCashTx = useCallback((type) => {
+    const pid = modalPortfolioId || portfolioId;
     if (!selectedAssets[CASH_TICKER]) {
       setSelectedAssets((prev) => ({ ...prev, [CASH_TICKER]: { name: 'Bank Account', color: '#6366f1' } }));
-      if (supabase && portfolioId) upsertAsset(supabase, portfolioId, { ticker: CASH_TICKER, name: 'Bank Account', color: '#6366f1' });
+      if (supabase && pid) upsertAsset(supabase, pid, { ticker: CASH_TICKER, name: 'Bank Account', color: '#6366f1' });
     }
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0)
       ? modalAmount
       : DEFAULT_AMOUNT;
     const tx = { id: genId(), ticker: CASH_TICKER, type, amount: validAmount, date: modalDate, currency: displayCurrency };
     setTransactions((prev) => [...prev, tx]);
-    if (supabase && portfolioId) insertTransaction(supabase, portfolioId, tx);
-  }, [modalAmount, modalDate, selectedAssets, displayCurrency, portfolioId]);
+    if (supabase && pid) insertTransaction(supabase, pid, tx);
+  }, [modalAmount, modalDate, selectedAssets, displayCurrency, portfolioId, modalPortfolioId]);
 
   // ─── Quick Add (AI)
 
@@ -882,9 +905,10 @@ const App = () => {
             }
             const tx = { id: genId(), ...resolved };
             setTransactions((prev) => [...prev, tx]);
-            if (supabase && portfolioId) {
-              upsertAsset(supabase, portfolioId, { ticker: CASH_TICKER, name: 'Bank Account', color });
-              insertTransaction(supabase, portfolioId, tx);
+            const pid = modalPortfolioId || portfolioId;
+            if (supabase && pid) {
+              upsertAsset(supabase, pid, { ticker: CASH_TICKER, name: 'Bank Account', color });
+              insertTransaction(supabase, pid, tx);
             }
             setQuickAddText('');
             setQuickAddStatus(null);
@@ -941,9 +965,10 @@ const App = () => {
           }
           const tx = { id: genId(), ...resolved };
           setTransactions((prev) => [...prev, tx]);
-          if (supabase && portfolioId) {
-            upsertAsset(supabase, portfolioId, { ticker, name: matchName, color });
-            insertTransaction(supabase, portfolioId, tx);
+          const pid = modalPortfolioId || portfolioId;
+          if (supabase && pid) {
+            upsertAsset(supabase, pid, { ticker, name: matchName, color });
+            insertTransaction(supabase, pid, tx);
           }
           setQuickAddText('');
           setQuickAddStatus(null);
@@ -1063,9 +1088,10 @@ const App = () => {
         }
         const tx = { id: genId(), ...resolved };
         setTransactions((prev) => [...prev, tx]);
-        if (supabase && portfolioId) {
-          upsertAsset(supabase, portfolioId, { ticker, name: matchName, color });
-          insertTransaction(supabase, portfolioId, tx);
+        const pid = modalPortfolioId || portfolioId;
+        if (supabase && pid) {
+          upsertAsset(supabase, pid, { ticker, name: matchName, color });
+          insertTransaction(supabase, pid, tx);
         }
         setQuickAddText('');
         setQuickAddStatus(null);
@@ -1075,7 +1101,7 @@ const App = () => {
       setQuickAddStatus(`error:${error.message || 'Could not understand. Please try again.'}`);
       setTimeout(() => setQuickAddStatus(null), 3000);
     }
-  }, [quickAddText, selectedAssets, chartData, quickAddVerify, supabase, portfolioId, displayCurrency, resolveShares]);
+  }, [quickAddText, selectedAssets, chartData, quickAddVerify, supabase, portfolioId, modalPortfolioId, displayCurrency, resolveShares]);
 
   const confirmQuickAdd = useCallback(() => {
     if (!quickAddPreview) return;
@@ -1087,13 +1113,14 @@ const App = () => {
     }
     const tx = { id: genId(), ticker, ...rest };
     setTransactions((prev) => [...prev, tx]);
-    if (supabase && portfolioId) {
-      upsertAsset(supabase, portfolioId, { ticker, name, color });
-      insertTransaction(supabase, portfolioId, tx);
+    const pid = modalPortfolioId || portfolioId;
+    if (supabase && pid) {
+      upsertAsset(supabase, pid, { ticker, name, color });
+      insertTransaction(supabase, pid, tx);
     }
     setQuickAddText('');
     setQuickAddPreview(null);
-  }, [quickAddPreview, selectedAssets, portfolioId]);
+  }, [quickAddPreview, selectedAssets, portfolioId, modalPortfolioId]);
 
   // ─── Import / Export ─────────────────────────────────────────────────────
 
@@ -1177,15 +1204,16 @@ const App = () => {
     });
     setSelectedAssets(newAssets);
     setTransactions((prev) => [...prev, ...newTxs]);
-    if (supabase && portfolioId) {
+    const pid = modalPortfolioId || portfolioId;
+    if (supabase && pid) {
       Object.entries(newAssets).forEach(([ticker, { name, color }]) => {
-        upsertAsset(supabase, portfolioId, { ticker, name, color });
+        upsertAsset(supabase, pid, { ticker, name, color });
       });
-      bulkInsertTransactions(supabase, portfolioId, newTxs);
+      bulkInsertTransactions(supabase, pid, newTxs);
     }
     setImportText('');
     setModalMode(null);
-  }, [importParsed, selectedAssets, displayCurrency, resolveShares, portfolioId]);
+  }, [importParsed, selectedAssets, displayCurrency, resolveShares, portfolioId, modalPortfolioId]);
 
   const exportCSV = useCallback(() => {
     const headers = 'Date,Asset,Name,Action,Quantity,Currency';
@@ -2178,7 +2206,7 @@ const App = () => {
         <div className="sticky top-0 z-30 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur-sm -mx-4 md:-mx-8 px-4 md:px-8 py-3">
         <div className="flex items-center">
           <button
-            onClick={() => setAddTxOpen(true)}
+            onClick={() => { setModalPortfolioId(portfolioId); setAddTxOpen(true); }}
             className={`px-4 py-2 rounded-2xl font-bold transition-all flex items-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white text-sm${transactions.length === 0 ? ' animate-[pulse-ring_2s_ease-in-out_infinite]' : ''}`}
           >
             New Transaction
@@ -2239,14 +2267,9 @@ const App = () => {
                             </button>
                             <button
                               onClick={() => switchPortfolio(p.id)}
-                              className={`flex-1 flex items-center gap-2 px-2 py-2 rounded-xl text-xs font-bold transition-all text-left ${
-                                p.id === portfolioId
-                                  ? 'text-blue-600 dark:text-blue-400'
-                                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-                              }`}
+                              className="flex-1 flex items-center gap-2 px-2 py-2 rounded-xl text-xs font-bold transition-all text-left text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
                               title="Set as active portfolio"
                             >
-                              {p.id === portfolioId && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />}
                               <span className="truncate">{p.name}</span>
                             </button>
                             <button
@@ -3446,6 +3469,19 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {user && portfolios.length > 1 && (
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Portfolio</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {portfolios.map((p) => (
+                    <button key={p.id} onClick={() => setModalPortfolioId(p.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${(modalPortfolioId || portfolioId) === p.id ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {/* Quick Add */}
             <div className="space-y-1.5">
 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Describe your transaction</p>
@@ -3562,6 +3598,19 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {user && portfolios.length > 1 && (
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Portfolio</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {portfolios.map((p) => (
+                    <button key={p.id} onClick={() => setModalPortfolioId(p.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${(modalPortfolioId || portfolioId) === p.id ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {stagedAsset ? (
               <div className="space-y-4">
@@ -3716,6 +3765,19 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {user && portfolios.length > 1 && (
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Portfolio</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {portfolios.map((p) => (
+                    <button key={p.id} onClick={() => setModalPortfolioId(p.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${(modalPortfolioId || portfolioId) === p.id ? 'bg-rose-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {sellTicker ? (() => {
               const entry = convertedChartData.findLast((p) => p.date <= modalDate);
@@ -3845,6 +3907,19 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {user && portfolios.length > 1 && (
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Portfolio</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {portfolios.map((p) => (
+                    <button key={p.id} onClick={() => setModalPortfolioId(p.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${(modalPortfolioId || portfolioId) === p.id ? (modalMode === 'deposit' ? 'bg-indigo-600 text-white' : 'bg-amber-600 text-white') : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="space-y-3">
               <div>
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Amount</label>
@@ -3892,6 +3967,19 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
                 <X className="w-5 h-5" />
               </button>
             </div>
+            {user && portfolios.length > 1 && (
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Portfolio</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {portfolios.map((p) => (
+                    <button key={p.id} onClick={() => setModalPortfolioId(p.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${(modalPortfolioId || portfolioId) === p.id ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'}`}>
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950 border border-blue-100 dark:border-blue-900">
               <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shadow-sm font-black text-[10px] ${editingTx.type === 'buy' ? 'bg-emerald-500' : 'bg-rose-500'}`}>
