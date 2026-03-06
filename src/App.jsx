@@ -20,6 +20,7 @@ import { toPng } from 'html-to-image';
 import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices, fetchExchangeRates } from './api';
 import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
+import { ensureProfile, loadUserData, upsertAsset, insertTransaction, updateTransaction, deleteTransaction, bulkInsertTransactions, updateProfile } from './db';
 import { Analytics } from '@vercel/analytics/react';
 
 const COLORS = [
@@ -396,9 +397,7 @@ try {
   if (raw) savedPortfolio = JSON.parse(raw);
 } catch { /* ignore */ }
 
-let nextTxId = savedPortfolio?.transactions?.length
-  ? Math.max(...savedPortfolio.transactions.map((t) => t.id), 0) + 1
-  : 1;
+const genId = () => crypto.randomUUID();
 
 const App = () => {
   // --- Search ---
@@ -471,7 +470,7 @@ const App = () => {
 
   // --- Auth & Sync ---
   const [user, setUser] = useState(null);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [portfolioId, setPortfolioId] = useState(null);
   const isHydratingRef = useRef(false);
 
   const [colorPickerTicker, setColorPickerTicker] = useState(null);
@@ -761,6 +760,7 @@ const App = () => {
       : (editingTx.amount || DEFAULT_AMOUNT);
     const dateToSave = overrideDate !== null ? overrideDate : modalDate;
     const priceToSave = overridePrice !== null ? overridePrice : modalPrice;
+    let updatedFields = null;
     setTransactions((prev) =>
       prev.map((tx) => {
         if (tx.id !== editingTx.id) return tx;
@@ -768,16 +768,19 @@ const App = () => {
         if (tx.ticker !== CASH_TICKER) {
           const resolved = resolveShares(tx.ticker, amountToSave, dateToSave, priceToSave || null);
           if (resolved) {
-            return { id: tx.id, ticker: tx.ticker, type: tx.type, shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: dateToSave };
+            updatedFields = { shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: dateToSave };
+            return { id: tx.id, ticker: tx.ticker, type: tx.type, ...updatedFields };
           }
         }
         // Cash tx or fallback
-        const updated = { ...tx, amount: amountToSave, date: dateToSave };
+        updatedFields = { amount: amountToSave, date: dateToSave };
+        const updated = { ...tx, ...updatedFields };
         if (priceToSave) updated.price = priceToSave;
         else delete updated.price;
         return updated;
       }),
     );
+    if (supabase && updatedFields) updateTransaction(supabase, editingTx.id, updatedFields);
     closeModal();
   }, [editingTx, modalAmount, modalDate, modalPrice, closeModal, resolveShares]);
 
@@ -785,46 +788,51 @@ const App = () => {
 
   const addBuy = useCallback((symbol, name) => {
     const ticker = symbol.toUpperCase();
+    const color = selectedAssets[ticker]?.color || COLORS[colorIdx.current % COLORS.length];
     if (!selectedAssets[ticker]) {
-      const color = COLORS[colorIdx.current % COLORS.length];
       colorIdx.current++;
       setSelectedAssets((prev) => ({ ...prev, [ticker]: { name, color } }));
     }
-    // Ensure amount is a valid number
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
       ? modalAmount 
       : DEFAULT_AMOUNT;
     const resolved = resolveShares(ticker, validAmount, modalDate, modalPrice || null);
     const tx = resolved
-      ? { id: nextTxId++, ticker, type: 'buy', shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: modalDate }
-      : { id: nextTxId++, ticker, type: 'buy', amount: validAmount, date: modalDate, currency: displayCurrency };
+      ? { id: genId(), ticker, type: 'buy', shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: modalDate }
+      : { id: genId(), ticker, type: 'buy', amount: validAmount, date: modalDate, currency: displayCurrency };
     if (modalPrice && !resolved) tx.price = modalPrice;
     setTransactions((prev) => [...prev, tx]);
-  }, [modalAmount, modalDate, modalPrice, selectedAssets, displayCurrency, resolveShares]);
+    if (supabase && portfolioId) {
+      upsertAsset(supabase, portfolioId, { ticker, name, color });
+      insertTransaction(supabase, portfolioId, tx);
+    }
+  }, [modalAmount, modalDate, modalPrice, selectedAssets, displayCurrency, resolveShares, portfolioId]);
 
   const addSell = useCallback((ticker) => {
-    // Ensure amount is a valid number
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0) 
       ? modalAmount 
       : DEFAULT_AMOUNT;
     const resolved = resolveShares(ticker, validAmount, modalDate, modalPrice || null);
     const tx = resolved
-      ? { id: nextTxId++, ticker, type: 'sell', shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: modalDate }
-      : { id: nextTxId++, ticker, type: 'sell', amount: validAmount, date: modalDate, currency: displayCurrency };
+      ? { id: genId(), ticker, type: 'sell', shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: modalDate }
+      : { id: genId(), ticker, type: 'sell', amount: validAmount, date: modalDate, currency: displayCurrency };
     if (modalPrice && !resolved) tx.price = modalPrice;
     setTransactions((prev) => [...prev, tx]);
-  }, [modalAmount, modalDate, modalPrice, displayCurrency, resolveShares]);
+    if (supabase && portfolioId) insertTransaction(supabase, portfolioId, tx);
+  }, [modalAmount, modalDate, modalPrice, displayCurrency, resolveShares, portfolioId]);
 
   const addCashTx = useCallback((type) => {
     if (!selectedAssets[CASH_TICKER]) {
       setSelectedAssets((prev) => ({ ...prev, [CASH_TICKER]: { name: 'Bank Account', color: '#6366f1' } }));
+      if (supabase && portfolioId) upsertAsset(supabase, portfolioId, { ticker: CASH_TICKER, name: 'Bank Account', color: '#6366f1' });
     }
     const validAmount = (typeof modalAmount === 'number' && !isNaN(modalAmount) && isFinite(modalAmount) && modalAmount > 0)
       ? modalAmount
       : DEFAULT_AMOUNT;
-    const tx = { id: nextTxId++, ticker: CASH_TICKER, type, amount: validAmount, date: modalDate, currency: displayCurrency };
+    const tx = { id: genId(), ticker: CASH_TICKER, type, amount: validAmount, date: modalDate, currency: displayCurrency };
     setTransactions((prev) => [...prev, tx]);
-  }, [modalAmount, modalDate, selectedAssets, displayCurrency]);
+    if (supabase && portfolioId) insertTransaction(supabase, portfolioId, tx);
+  }, [modalAmount, modalDate, selectedAssets, displayCurrency, portfolioId]);
 
   // ─── Quick Add (AI)
 
@@ -847,12 +855,17 @@ const App = () => {
             setQuickAddPreview(resolved);
             setQuickAddStatus(null);
           } else {
+            const color = selectedAssets[CASH_TICKER]?.color || COLORS[colorIdx.current % COLORS.length];
             if (!selectedAssets[CASH_TICKER]) {
-              const color = COLORS[colorIdx.current % COLORS.length];
               colorIdx.current++;
               setSelectedAssets((prev) => ({ ...prev, [CASH_TICKER]: { name: 'Bank Account', color } }));
             }
-            setTransactions((prev) => [...prev, { id: nextTxId++, ...resolved }]);
+            const tx = { id: genId(), ...resolved };
+            setTransactions((prev) => [...prev, tx]);
+            if (supabase && portfolioId) {
+              upsertAsset(supabase, portfolioId, { ticker: CASH_TICKER, name: 'Bank Account', color });
+              insertTransaction(supabase, portfolioId, tx);
+            }
             setQuickAddText('');
             setQuickAddStatus(null);
           }
@@ -901,12 +914,17 @@ const App = () => {
           setQuickAddPreview(resolved);
           setQuickAddStatus(null);
         } else {
+          const color = selectedAssets[ticker]?.color || COLORS[colorIdx.current % COLORS.length];
           if (!selectedAssets[ticker]) {
-            const color = COLORS[colorIdx.current % COLORS.length];
             colorIdx.current++;
             setSelectedAssets((prev) => ({ ...prev, [ticker]: { name: matchName, color } }));
           }
-          setTransactions((prev) => [...prev, { id: nextTxId++, ...resolved }]);
+          const tx = { id: genId(), ...resolved };
+          setTransactions((prev) => [...prev, tx]);
+          if (supabase && portfolioId) {
+            upsertAsset(supabase, portfolioId, { ticker, name: matchName, color });
+            insertTransaction(supabase, portfolioId, tx);
+          }
           setQuickAddText('');
           setQuickAddStatus(null);
         }
@@ -1018,12 +1036,17 @@ const App = () => {
         setQuickAddPreview(resolved);
         setQuickAddStatus(null);
       } else {
+        const color = selectedAssets[ticker]?.color || COLORS[colorIdx.current % COLORS.length];
         if (!selectedAssets[ticker]) {
-          const color = COLORS[colorIdx.current % COLORS.length];
           colorIdx.current++;
           setSelectedAssets((prev) => ({ ...prev, [ticker]: { name: matchName, color } }));
         }
-        setTransactions((prev) => [...prev, { id: nextTxId++, ...resolved }]);
+        const tx = { id: genId(), ...resolved };
+        setTransactions((prev) => [...prev, tx]);
+        if (supabase && portfolioId) {
+          upsertAsset(supabase, portfolioId, { ticker, name: matchName, color });
+          insertTransaction(supabase, portfolioId, tx);
+        }
         setQuickAddText('');
         setQuickAddStatus(null);
       }
@@ -1032,21 +1055,25 @@ const App = () => {
       setQuickAddStatus(`error:${error.message || 'Could not understand. Please try again.'}`);
       setTimeout(() => setQuickAddStatus(null), 3000);
     }
-  }, [quickAddText, selectedAssets, chartData, quickAddVerify, supabase, displayCurrency, resolveShares]);
+  }, [quickAddText, selectedAssets, chartData, quickAddVerify, supabase, portfolioId, displayCurrency, resolveShares]);
 
   const confirmQuickAdd = useCallback(() => {
     if (!quickAddPreview) return;
     const { ticker, name, ...rest } = quickAddPreview;
+    const color = selectedAssets[ticker]?.color || COLORS[colorIdx.current % COLORS.length];
     if (!selectedAssets[ticker]) {
-      const color = COLORS[colorIdx.current % COLORS.length];
       colorIdx.current++;
       setSelectedAssets((prev) => ({ ...prev, [ticker]: { name, color } }));
     }
-    // Preview already has shares/priceAtEntry or amount/currency — use as-is
-    setTransactions((prev) => [...prev, { id: nextTxId++, ticker, ...rest }]);
+    const tx = { id: genId(), ticker, ...rest };
+    setTransactions((prev) => [...prev, tx]);
+    if (supabase && portfolioId) {
+      upsertAsset(supabase, portfolioId, { ticker, name, color });
+      insertTransaction(supabase, portfolioId, tx);
+    }
     setQuickAddText('');
     setQuickAddPreview(null);
-  }, [quickAddPreview, selectedAssets]);
+  }, [quickAddPreview, selectedAssets, portfolioId]);
 
   // ─── Import / Export ─────────────────────────────────────────────────────
 
@@ -1112,27 +1139,33 @@ const App = () => {
           // Import has share count directly — look up entry price from cache
           const cache = livePriceCacheRef.current;
           const entryPrice = row.price || cache?.[row.ticker]?.findLast(p => p.date <= row.date)?.price;
-          newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, shares: row.amount, priceAtEntry: entryPrice || 0, date: row.date });
+          newTxs.push({ id: genId(), ticker: row.ticker, type: row.type, shares: row.amount, priceAtEntry: entryPrice || 0, date: row.date });
         } else {
           // Legacy import with monetary amount — resolve to shares
           const resolved = resolveShares(row.ticker, row.amount, row.date, row.price || null);
           if (resolved) {
-            newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: row.date });
+            newTxs.push({ id: genId(), ticker: row.ticker, type: row.type, shares: resolved.shares, priceAtEntry: resolved.priceAtEntry, date: row.date });
           } else {
-            const importedTx = { id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: displayCurrency };
+            const importedTx = { id: genId(), ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: displayCurrency };
             if (row.price) importedTx.price = row.price;
             newTxs.push(importedTx);
           }
         }
       } else {
-        newTxs.push({ id: nextTxId++, ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: row.currency || displayCurrency });
+        newTxs.push({ id: genId(), ticker: row.ticker, type: row.type, amount: row.amount, date: row.date, currency: row.currency || displayCurrency });
       }
     });
     setSelectedAssets(newAssets);
     setTransactions((prev) => [...prev, ...newTxs]);
+    if (supabase && portfolioId) {
+      Object.entries(newAssets).forEach(([ticker, { name, color }]) => {
+        upsertAsset(supabase, portfolioId, { ticker, name, color });
+      });
+      bulkInsertTransactions(supabase, portfolioId, newTxs);
+    }
     setImportText('');
     setModalMode(null);
-  }, [importParsed, selectedAssets, displayCurrency, resolveShares]);
+  }, [importParsed, selectedAssets, displayCurrency, resolveShares, portfolioId]);
 
   const exportCSV = useCallback(() => {
     const headers = 'Date,Asset,Name,Action,Quantity,Currency';
@@ -1265,7 +1298,10 @@ const App = () => {
       
       // Set new timer to permanently delete after 5 seconds
       const timer = setTimeout(() => {
-        setDeletedTx(null);
+        setDeletedTx((cur) => {
+          if (cur && supabase) deleteTransaction(supabase, cur.tx.id);
+          return null;
+        });
         setUndoTimer(null);
       }, 5000);
       setUndoTimer(timer);
@@ -1290,16 +1326,14 @@ const App = () => {
     
     // Clear the timer immediately
     setUndoTimer((timer) => {
-      if (timer) {
-        clearTimeout(timer);
-      }
+      if (timer) clearTimeout(timer);
       return null;
     });
     
     // Clear undo state immediately (removes the toast)
     setDeletedTx(null);
     
-    // Restore the transaction
+    // Restore the transaction — no DB delete was fired yet (timer was cleared)
     setTransactions((txs) => [...txs, currentDeleted.tx]);
     
     // Restore asset if it was removed
@@ -1311,11 +1345,14 @@ const App = () => {
   const toggleHideAsset = useCallback((ticker) => {
     setHiddenAssets((prev) => {
       const next = new Set(prev);
-      if (next.has(ticker)) next.delete(ticker);
-      else next.add(ticker);
+      const nowHidden = !next.has(ticker);
+      if (nowHidden) next.add(ticker); else next.delete(ticker);
+      if (supabase && portfolioId && selectedAssets[ticker]) {
+        upsertAsset(supabase, portfolioId, { ticker, name: selectedAssets[ticker].name, color: selectedAssets[ticker].color, hidden: nowHidden });
+      }
       return next;
     });
-  }, []);
+  }, [portfolioId, selectedAssets]);
 
   // ─── Persistence ───────────────────────────────────────────────────────────────
 
@@ -1327,7 +1364,7 @@ const App = () => {
       const cleanTransactions = transactions.map((tx) => {
         // Only include primitive values, ensure types are correct
         const clean = {
-          id: typeof tx.id === 'number' ? tx.id : Number(tx.id),
+          id: tx.id,
           ticker: String(tx.ticker || ''),
           type: String(tx.type || 'buy'),
           date: String(tx.date || TODAY)
@@ -1370,7 +1407,7 @@ const App = () => {
       try {
         const minimalData = {
           transactions: transactions.map((tx) => ({
-            id: Number(tx.id),
+            id: tx.id,
             ticker: String(tx.ticker),
             type: String(tx.type),
             date: String(tx.date),
@@ -1391,6 +1428,15 @@ const App = () => {
     }
   }, [transactions, selectedAssets, hiddenAssets, displayCurrency, overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen]);
 
+  // Debounced view_states sync to profile
+  useEffect(() => {
+    if (!supabase || !user || isHydratingRef.current) return;
+    const t = setTimeout(() => {
+      updateProfile(supabase, user.id, { view_states: { overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen } });
+    }, 2000);
+    return () => clearTimeout(t);
+  }, [overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen, user]);
+
   // Auth state listener
   useEffect(() => {
     if (!supabase) return;
@@ -1402,77 +1448,53 @@ const App = () => {
           name: u.user_metadata?.full_name || u.email,
           avatar: u.user_metadata?.avatar_url,
         });
-        // Load from cloud
+        // Load from normalized tables
         try {
-          const { data } = await supabase.from('portfolios').select('*').eq('user_id', u.id).maybeSingle();
-          if (data?.transactions?.length > 0) {
+          const { profile, portfolioId: pid } = await ensureProfile(supabase, u.id);
+          setPortfolioId(pid);
+          const { assets, transactions: dbTxs } = await loadUserData(supabase, u.id);
+          if (dbTxs.length > 0) {
             isHydratingRef.current = true;
-            setTransactions(data.transactions);
-            setSelectedAssets(data.selected_assets || {});
-            setHiddenAssets(new Set(data.hidden_assets || []));
-            colorIdx.current = data.color_idx || 0;
-            if (data.display_currency) {
-              setDisplayCurrency(data.display_currency);
-              _displayCurrency = data.display_currency;
-              localStorage.setItem('investo-currency', data.display_currency);
+            setTransactions(dbTxs);
+            // Build selectedAssets and hiddenAssets from assets table
+            const sa = {};
+            const hidden = [];
+            assets.forEach((a) => {
+              sa[a.ticker] = { name: a.name, color: a.color };
+              if (a.hidden) hidden.push(a.ticker);
+            });
+            setSelectedAssets(sa);
+            setHiddenAssets(new Set(hidden));
+            colorIdx.current = assets.filter((a) => a.ticker !== CASH_TICKER).length;
+          }
+          if (profile) {
+            if (profile.display_currency) {
+              setDisplayCurrency(profile.display_currency);
+              _displayCurrency = profile.display_currency;
+              localStorage.setItem('investo-currency', profile.display_currency);
             }
-            if (data.view_states) {
-              const vs = data.view_states;
+            if (profile.dark_mode != null) {
+              setDark(profile.dark_mode);
+              localStorage.setItem('investo-dark', String(profile.dark_mode));
+            }
+            if (profile.view_states) {
+              const vs = profile.view_states;
               if (vs.overviewOpen != null) setOverviewOpen(vs.overviewOpen);
               if (vs.chartsOpen != null) setChartsOpen(vs.chartsOpen);
               if (vs.summaryOpen != null) setSummaryOpen(vs.summaryOpen);
               if (vs.statsOpen != null) setStatsOpen(vs.statsOpen);
               if (vs.aboutOpen != null) setAboutOpen(vs.aboutOpen);
             }
-            nextTxId = Math.max(...data.transactions.map((t) => t.id), 0) + 1;
-            localStorage.setItem(LS_KEY, JSON.stringify({
-              transactions: data.transactions, selectedAssets: data.selected_assets || {}, colorIdx: data.color_idx || 0,
-              hiddenAssets: data.hidden_assets || [], displayCurrency: data.display_currency || 'EUR',
-              viewStates: data.view_states || {},
-            }));
-            setTimeout(() => { isHydratingRef.current = false; }, 200);
           }
-          if (data) {
-            if (data.dark_mode != null) {
-              setDark(data.dark_mode);
-              localStorage.setItem('investo-dark', String(data.dark_mode));
-            } else {
-              // First sign-in after adding column — persist current local preference
-              const currentDark = localStorage.getItem('investo-dark') === 'true';
-              supabase.from('portfolios').update({ dark_mode: currentDark }).eq('user_id', u.id);
-            }
-          }
-        } catch { /* first sign-in — no data yet */ }
+          setTimeout(() => { isHydratingRef.current = false; }, 200);
+        } catch (e) { console.error('Auth hydration error:', e); }
       } else {
         setUser(null);
+        setPortfolioId(null);
       }
     });
     return () => subscription.unsubscribe();
   }, []);
-
-  // Debounced save to Supabase
-  const syncPromiseRef = useRef(null);
-  useEffect(() => {
-    if (!supabase || !user || isHydratingRef.current) return;
-    setIsSyncing(true);
-    const t = setTimeout(() => {
-      const p = supabase.from('portfolios').upsert({
-          user_id: user.id,
-          transactions,
-          selected_assets: selectedAssets,
-          hidden_assets: [...hiddenAssets],
-          color_idx: colorIdx.current,
-          dark_mode: dark,
-          display_currency: displayCurrency,
-          view_states: { overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen },
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id' })
-        .then(({ error }) => { if (error) console.error('Supabase upsert error:', error); })
-        .finally(() => { setIsSyncing(false); syncPromiseRef.current = null; });
-      syncPromiseRef.current = p;
-    }, 1500);
-    return () => { clearTimeout(t); setIsSyncing(false); };
-  }, [transactions, selectedAssets, hiddenAssets, user, dark, displayCurrency, overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen]);
 
   const signInWithGoogle = useCallback(async () => {
     if (!supabase) return;
@@ -1483,33 +1505,12 @@ const App = () => {
   const signOut = useCallback(async () => {
     if (!supabase) return;
     setIsSigningOut(true);
-    console.log('[signOut] started');
-    // Wait for any in-flight sync to finish
-    if (syncPromiseRef.current) {
-      console.log('[signOut] waiting for in-flight sync...');
-      try { await syncPromiseRef.current; } catch { /* ignore */ }
-      console.log('[signOut] in-flight sync done');
-    }
-    // Final flush to catch any changes since last sync
-    console.log('[signOut] final flush...');
-    try {
-      if (user) {
-        await supabase.from('portfolios').upsert({
-          user_id: user.id, transactions, selected_assets: selectedAssets,
-          hidden_assets: [...hiddenAssets], color_idx: colorIdx.current,
-          dark_mode: dark, display_currency: displayCurrency,
-          view_states: { overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen },
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'user_id' });
-      }
-    } catch (e) { console.error('[signOut] flush error:', e); }
-    console.log('[signOut] flush done, signing out from auth...');
-    // Sign out from auth (spinner still visible)
-    try { await supabase.auth.signOut(); } catch (e) { console.error('[signOut] auth signOut error:', e); }
-    console.log('[signOut] auth signOut done, clearing state...');
-    // Now clear local state
+    // No sync needed — every mutation is written to DB immediately
+    try { await supabase.auth.signOut(); } catch { /* ignore */ }
+    // Clear local state
     isHydratingRef.current = true;
     setUser(null);
+    setPortfolioId(null);
     setTransactions([]);
     setSelectedAssets({});
     setHiddenAssets(new Set());
@@ -1526,7 +1527,7 @@ const App = () => {
     localStorage.removeItem('investo-currency');
     setIsSigningOut(false);
     setTimeout(() => { isHydratingRef.current = false; }, 200);
-  }, [user, transactions, selectedAssets, hiddenAssets, dark, displayCurrency, overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen]);
+  }, []);
 
   // ─── Auto-fetch prices ──────────────────────────────────────────
 
@@ -1632,6 +1633,7 @@ const App = () => {
   // ─── Backfill missing priceAtEntry for imported shares-based transactions ─
   useEffect(() => {
     if (!livePriceCache) return;
+    let updatedTxs = [];
     setTransactions((prev) => {
       let changed = false;
       const next = prev.map((tx) => {
@@ -1641,11 +1643,16 @@ const App = () => {
         const entry = prices.findLast((p) => p.date <= tx.date);
         if (!entry || entry.price <= 0) return tx;
         changed = true;
-        return { ...tx, priceAtEntry: entry.price };
+        const updated = { ...tx, priceAtEntry: entry.price };
+        updatedTxs.push(updated);
+        return updated;
       });
       return changed ? next : prev;
     });
-  }, [livePriceCache]);
+    if (supabase && portfolioId && updatedTxs.length > 0) {
+      updatedTxs.forEach((tx) => updateTransaction(supabase, portfolioId, tx));
+    }
+  }, [livePriceCache, supabase, portfolioId]);
 
   // ─── Recompute chart
 
@@ -1997,9 +2004,7 @@ const App = () => {
     const next = !dark;
     setDark(next);
     localStorage.setItem('investo-dark', next);
-    if (supabase && user) {
-      supabase.from('portfolios').update({ dark_mode: next }).eq('user_id', user.id);
-    }
+    if (supabase && user) updateProfile(supabase, user.id, { dark_mode: next });
   }, [dark, user]);
 
   const toggleCurrency = useCallback(() => {
@@ -2007,9 +2012,7 @@ const App = () => {
     setDisplayCurrency(next);
     _displayCurrency = next;
     localStorage.setItem('investo-currency', next);
-    if (supabase && user) {
-      supabase.from('portfolios').update({ display_currency: next }).eq('user_id', user.id);
-    }
+    if (supabase && user) updateProfile(supabase, user.id, { display_currency: next });
   }, [displayCurrency, user]);
 
 
