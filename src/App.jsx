@@ -1437,10 +1437,53 @@ const App = () => {
     return () => clearTimeout(t);
   }, [overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen, user]);
 
-  // Auth state listener
+  // Hydrate user data from Supabase (called outside onAuthStateChange to avoid deadlock)
+  const hydrateFromDB = useCallback(async (u) => {
+    try {
+      const { profile, portfolioId: pid } = await ensureProfile(supabase, u.id);
+      setPortfolioId(pid);
+      const { assets, transactions: dbTxs } = await loadUserData(supabase, u.id);
+      if (dbTxs.length > 0) {
+        isHydratingRef.current = true;
+        setTransactions(dbTxs);
+        // Build selectedAssets and hiddenAssets from assets table
+        const sa = {};
+        const hidden = [];
+        assets.forEach((a) => {
+          sa[a.ticker] = { name: a.name, color: a.color };
+          if (a.hidden) hidden.push(a.ticker);
+        });
+        setSelectedAssets(sa);
+        setHiddenAssets(new Set(hidden));
+        colorIdx.current = assets.filter((a) => a.ticker !== CASH_TICKER).length;
+      }
+      if (profile) {
+        if (profile.display_currency) {
+          setDisplayCurrency(profile.display_currency);
+          _displayCurrency = profile.display_currency;
+          localStorage.setItem('investo-currency', profile.display_currency);
+        }
+        if (profile.dark_mode != null) {
+          setDark(profile.dark_mode);
+          localStorage.setItem('investo-dark', String(profile.dark_mode));
+        }
+        if (profile.view_states) {
+          const vs = profile.view_states;
+          if (vs.overviewOpen != null) setOverviewOpen(vs.overviewOpen);
+          if (vs.chartsOpen != null) setChartsOpen(vs.chartsOpen);
+          if (vs.summaryOpen != null) setSummaryOpen(vs.summaryOpen);
+          if (vs.statsOpen != null) setStatsOpen(vs.statsOpen);
+          if (vs.aboutOpen != null) setAboutOpen(vs.aboutOpen);
+        }
+      }
+      setTimeout(() => { isHydratingRef.current = false; }, 200);
+    } catch (e) { console.error('Auth hydration error:', e); }
+  }, []);
+
+  // Auth state listener — callback must be synchronous to avoid Supabase deadlock
   useEffect(() => {
     if (!supabase) return;
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         const u = session.user;
         setUser({
@@ -1448,53 +1491,15 @@ const App = () => {
           name: u.user_metadata?.full_name || u.email,
           avatar: u.user_metadata?.avatar_url,
         });
-        // Load from normalized tables
-        try {
-          const { profile, portfolioId: pid } = await ensureProfile(supabase, u.id);
-          setPortfolioId(pid);
-          const { assets, transactions: dbTxs } = await loadUserData(supabase, u.id);
-          if (dbTxs.length > 0) {
-            isHydratingRef.current = true;
-            setTransactions(dbTxs);
-            // Build selectedAssets and hiddenAssets from assets table
-            const sa = {};
-            const hidden = [];
-            assets.forEach((a) => {
-              sa[a.ticker] = { name: a.name, color: a.color };
-              if (a.hidden) hidden.push(a.ticker);
-            });
-            setSelectedAssets(sa);
-            setHiddenAssets(new Set(hidden));
-            colorIdx.current = assets.filter((a) => a.ticker !== CASH_TICKER).length;
-          }
-          if (profile) {
-            if (profile.display_currency) {
-              setDisplayCurrency(profile.display_currency);
-              _displayCurrency = profile.display_currency;
-              localStorage.setItem('investo-currency', profile.display_currency);
-            }
-            if (profile.dark_mode != null) {
-              setDark(profile.dark_mode);
-              localStorage.setItem('investo-dark', String(profile.dark_mode));
-            }
-            if (profile.view_states) {
-              const vs = profile.view_states;
-              if (vs.overviewOpen != null) setOverviewOpen(vs.overviewOpen);
-              if (vs.chartsOpen != null) setChartsOpen(vs.chartsOpen);
-              if (vs.summaryOpen != null) setSummaryOpen(vs.summaryOpen);
-              if (vs.statsOpen != null) setStatsOpen(vs.statsOpen);
-              if (vs.aboutOpen != null) setAboutOpen(vs.aboutOpen);
-            }
-          }
-          setTimeout(() => { isHydratingRef.current = false; }, 200);
-        } catch (e) { console.error('Auth hydration error:', e); }
+        // Defer async DB work outside the callback to prevent deadlock
+        setTimeout(() => hydrateFromDB(u), 0);
       } else {
         setUser(null);
         setPortfolioId(null);
       }
     });
     return () => subscription.unsubscribe();
-  }, []);
+  }, [hydrateFromDB]);
 
   const signInWithGoogle = useCallback(async () => {
     if (!supabase) return;
@@ -1506,7 +1511,13 @@ const App = () => {
     if (!supabase) return;
     setIsSigningOut(true);
     // No sync needed — every mutation is written to DB immediately
-    try { await supabase.auth.signOut(); } catch { /* ignore */ }
+    // Race with timeout to prevent infinite hang from Supabase lock issues
+    try {
+      await Promise.race([
+        supabase.auth.signOut(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('signOut timeout')), 5000)),
+      ]);
+    } catch { /* ignore — force continue with local cleanup */ }
     // Clear local state
     isHydratingRef.current = true;
     setUser(null);

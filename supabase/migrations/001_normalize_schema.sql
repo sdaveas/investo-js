@@ -60,13 +60,13 @@ alter table assets enable row level security;
 alter table transactions enable row level security;
 
 create policy "Users manage own profile" on profiles
-  for all using (auth.uid() = id);
+  for all using ((select auth.uid()) = id);
 
 create policy "Users manage own portfolios" on portfolios
-  for all using (auth.uid() = user_id);
+  for all using ((select auth.uid()) = user_id);
 
 create policy "Users manage own assets" on assets
-  for all using (portfolio_id in (select id from portfolios where user_id = auth.uid()));
+  for all using (portfolio_id in (select id from portfolios where user_id = (select auth.uid())));
 
 create policy "Users manage own transactions" on transactions
-  for all using (portfolio_id in (select id from portfolios where user_id = auth.uid()));
+  for all using (portfolio_id in (select id from portfolios where user_id = (select auth.uid())));
