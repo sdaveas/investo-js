@@ -14,13 +14,13 @@ import {
   ShoppingCart, HandCoins, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
   LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText, Menu, Coffee, RefreshCw,
   ChevronLeft, ChevronRight, Share2, Camera, Check, Link, ExternalLink, Maximize2, Minimize2,
-  Landmark, Eye, EyeOff,
+  Landmark, Eye, EyeOff, FolderOpen, ChevronDown,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices, fetchExchangeRates } from './api';
 import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
-import { ensureProfile, loadUserData, upsertAsset, deleteAsset, insertTransaction, updateTransaction, deleteTransaction, bulkInsertTransactions, updateProfile } from './db';
+import { ensureProfile, loadPortfolioData, upsertAsset, deleteAsset, insertTransaction, updateTransaction, deleteTransaction, bulkInsertTransactions, updateProfile, createPortfolio, renamePortfolio, deletePortfolio as deletePortfolioDb } from './db';
 import { Analytics } from '@vercel/analytics/react';
 
 const COLORS = [
@@ -391,6 +391,7 @@ const IntradayPricePicker = ({ ticker, date, price, onPriceChange, accentColor =
 };
 
 const LS_KEY = 'investo-portfolio';
+const lsKeyFor = (pid) => pid ? `investo-portfolio-${pid}` : LS_KEY;
 let savedPortfolio = null;
 try {
   const raw = localStorage.getItem(LS_KEY);
@@ -471,6 +472,12 @@ const App = () => {
   // --- Auth & Sync ---
   const [user, setUser] = useState(null);
   const [portfolioId, setPortfolioId] = useState(null);
+  const [portfolios, setPortfolios] = useState([]);
+  const [checkedPortfolioIds, setCheckedPortfolioIds] = useState(new Set());
+  const [portfolioSwitcherOpen, setPortfolioSwitcherOpen] = useState(false);
+  const [newPortfolioName, setNewPortfolioName] = useState('');
+  const [renamingPortfolioId, setRenamingPortfolioId] = useState(null);
+  const [renamingPortfolioName, setRenamingPortfolioName] = useState('');
   const isHydratingRef = useRef(false);
 
   const [colorPickerTicker, setColorPickerTicker] = useState(null);
@@ -1379,6 +1386,8 @@ const App = () => {
   // Save to localStorage on every change
   useEffect(() => {
     if (isHydratingRef.current) return;
+    if (checkedPortfolioIds.size > 1) return; // skip save in multi-portfolio aggregation mode
+    const key = lsKeyFor(portfolioId);
     try {
       // Create clean copies to avoid any circular references
       const cleanTransactions = transactions.map((tx) => {
@@ -1420,7 +1429,7 @@ const App = () => {
         viewStates,
       };
       
-      localStorage.setItem(LS_KEY, JSON.stringify(dataToSave));
+      localStorage.setItem(key, JSON.stringify(dataToSave));
     } catch (error) {
       console.error('Failed to save to localStorage:', error);
       // Try to save with minimal data as fallback
@@ -1441,21 +1450,59 @@ const App = () => {
           colorIdx: 0,
           hiddenAssets: [...hiddenAssets],
         };
-        localStorage.setItem(LS_KEY, JSON.stringify(minimalData));
+        localStorage.setItem(key, JSON.stringify(minimalData));
       } catch (fallbackError) {
         console.error('Fallback save also failed:', fallbackError);
       }
     }
-  }, [transactions, selectedAssets, hiddenAssets, displayCurrency, overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen]);
+  }, [transactions, selectedAssets, hiddenAssets, displayCurrency, overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen, portfolioId, checkedPortfolioIds]);
 
   // Debounced view_states sync to profile
   useEffect(() => {
     if (!supabase || !user || isHydratingRef.current) return;
     const t = setTimeout(() => {
-      updateProfile(supabase, user.id, { view_states: { overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen } });
+      updateProfile(supabase, user.id, { view_states: { overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen, activePortfolioId: portfolioId, checkedPortfolioIds: [...checkedPortfolioIds] } });
     }, 2000);
     return () => clearTimeout(t);
-  }, [overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen, user]);
+  }, [overviewOpen, chartsOpen, summaryOpen, statsOpen, aboutOpen, user, portfolioId, checkedPortfolioIds]);
+
+  // Hydrate one or more portfolios' data into state (merged)
+  const hydratePortfolios = useCallback(async (pids) => {
+    isHydratingRef.current = true;
+    // Clear current portfolio state
+    setTransactions([]);
+    setSelectedAssets({});
+    setHiddenAssets(new Set());
+    setPriceCache(null);
+    setChartData([]);
+    setStats([]);
+    setAssetCurrencies({});
+    setExchangeRates([]);
+    setLiveQuotes({});
+    colorIdx.current = 0;
+    fetchedRangesRef.current = {};
+    try {
+      const results = await Promise.all(pids.map((pid) => loadPortfolioData(supabase, pid)));
+      const allTxs = [];
+      const sa = {};
+      const hidden = [];
+      results.forEach(({ assets, transactions: dbTxs }) => {
+        allTxs.push(...dbTxs);
+        assets.forEach((a) => {
+          if (!sa[a.ticker]) sa[a.ticker] = { name: a.name, color: a.color };
+          if (a.hidden && !hidden.includes(a.ticker)) hidden.push(a.ticker);
+        });
+      });
+      if (allTxs.length > 0) {
+        setTransactions(allTxs);
+        setSelectedAssets(sa);
+        setHiddenAssets(new Set(hidden));
+        colorIdx.current = Object.keys(sa).filter((t) => t !== CASH_TICKER).length;
+      }
+    } finally {
+      setTimeout(() => { isHydratingRef.current = false; }, 200);
+    }
+  }, []);
 
   // Hydrate user data from Supabase (called outside onAuthStateChange to avoid deadlock)
   const hydratingUserRef = useRef(null);
@@ -1463,23 +1510,23 @@ const App = () => {
     if (hydratingUserRef.current === u.id) return;
     hydratingUserRef.current = u.id;
     try {
-      const { profile, portfolioId: pid } = await ensureProfile(supabase, u.id);
-      setPortfolioId(pid);
-      const { assets, transactions: dbTxs } = await loadUserData(supabase, u.id);
-      if (dbTxs.length > 0) {
-        isHydratingRef.current = true;
-        setTransactions(dbTxs);
-        // Build selectedAssets and hiddenAssets from assets table
-        const sa = {};
-        const hidden = [];
-        assets.forEach((a) => {
-          sa[a.ticker] = { name: a.name, color: a.color };
-          if (a.hidden) hidden.push(a.ticker);
-        });
-        setSelectedAssets(sa);
-        setHiddenAssets(new Set(hidden));
-        colorIdx.current = assets.filter((a) => a.ticker !== CASH_TICKER).length;
+      const { profile, portfolios: userPortfolios } = await ensureProfile(supabase, u.id);
+      setPortfolios(userPortfolios);
+      // Restore checked portfolio IDs from view_states, or fall back to active
+      const lastUsedPid = profile?.view_states?.activePortfolioId;
+      const savedChecked = profile?.view_states?.checkedPortfolioIds;
+      let checkedIds;
+      if (savedChecked && savedChecked.length > 0) {
+        const validIds = savedChecked.filter((id) => userPortfolios.some((p) => p.id === id));
+        checkedIds = validIds.length > 0 ? validIds : [userPortfolios[0]?.id];
+      } else {
+        const fallbackPid = userPortfolios.find((p) => p.id === lastUsedPid)?.id || userPortfolios[0]?.id;
+        checkedIds = [fallbackPid];
       }
+      const activePid = checkedIds.includes(lastUsedPid) ? lastUsedPid : checkedIds[0];
+      setPortfolioId(activePid);
+      setCheckedPortfolioIds(new Set(checkedIds));
+      await hydratePortfolios(checkedIds);
       if (profile) {
         if (profile.display_currency) {
           setDisplayCurrency(profile.display_currency);
@@ -1499,11 +1546,77 @@ const App = () => {
           if (vs.aboutOpen != null) setAboutOpen(vs.aboutOpen);
         }
       }
-      setTimeout(() => { isHydratingRef.current = false; }, 200);
     } catch (e) {
       hydratingUserRef.current = null;
       console.error('Auth hydration error:', e);
     }
+  }, [hydratePortfolios]);
+
+  // ─── Portfolio management ─────────────────────────────────────────────────
+
+  const switchPortfolio = useCallback(async (pid) => {
+    if (pid === portfolioId && checkedPortfolioIds.size === 1 && checkedPortfolioIds.has(pid)) return;
+    setPortfolioId(pid);
+    setCheckedPortfolioIds(new Set([pid]));
+    await hydratePortfolios([pid]);
+    setPortfolioSwitcherOpen(false);
+  }, [portfolioId, checkedPortfolioIds, hydratePortfolios]);
+
+  const handleCreatePortfolio = useCallback(async (name) => {
+    if (!supabase || !user || !name.trim()) return;
+    try {
+      const newP = await createPortfolio(supabase, user.id, name.trim());
+      setPortfolios((prev) => [...prev, newP]);
+      setNewPortfolioName('');
+      await switchPortfolio(newP.id);
+    } catch (e) {
+      console.error('Failed to create portfolio:', e);
+    }
+  }, [user, switchPortfolio]);
+
+  const togglePortfolioCheck = useCallback(async (pid) => {
+    const newChecked = new Set(checkedPortfolioIds);
+    if (newChecked.has(pid)) {
+      newChecked.delete(pid);
+      if (newChecked.size === 0) return; // can't uncheck all
+    } else {
+      newChecked.add(pid);
+    }
+    setCheckedPortfolioIds(newChecked);
+    // If primary is no longer checked, update it
+    if (!newChecked.has(portfolioId)) {
+      setPortfolioId([...newChecked][0]);
+    }
+    await hydratePortfolios([...newChecked]);
+  }, [checkedPortfolioIds, portfolioId, hydratePortfolios]);
+
+  const handleDeletePortfolio = useCallback(async (pid) => {
+    if (!supabase || portfolios.length <= 1) return; // prevent deleting last portfolio
+    try {
+      await deletePortfolioDb(supabase, pid);
+      const remaining = portfolios.filter((p) => p.id !== pid);
+      setPortfolios(remaining);
+      // Remove from checked set
+      const newChecked = new Set(checkedPortfolioIds);
+      newChecked.delete(pid);
+      if (newChecked.size === 0) newChecked.add(remaining[0].id);
+      setCheckedPortfolioIds(newChecked);
+      // If we deleted the primary, switch to another
+      if (pid === portfolioId) {
+        setPortfolioId([...newChecked][0]);
+      }
+      await hydratePortfolios([...newChecked]);
+    } catch (e) {
+      console.error('Failed to delete portfolio:', e);
+    }
+  }, [portfolios, portfolioId, checkedPortfolioIds, hydratePortfolios]);
+
+  const handleRenamePortfolio = useCallback((pid, name) => {
+    if (!supabase || !name.trim()) return;
+    renamePortfolio(supabase, pid, name.trim());
+    setPortfolios((prev) => prev.map((p) => p.id === pid ? { ...p, name: name.trim() } : p));
+    setRenamingPortfolioId(null);
+    setRenamingPortfolioName('');
   }, []);
 
   // Auth state listener — callback must be synchronous to avoid Supabase deadlock
@@ -1522,6 +1635,8 @@ const App = () => {
       } else {
         setUser(null);
         setPortfolioId(null);
+        setPortfolios([]);
+        setCheckedPortfolioIds(new Set());
       }
     });
     return () => subscription.unsubscribe();
@@ -1548,6 +1663,8 @@ const App = () => {
     isHydratingRef.current = true;
     setUser(null);
     setPortfolioId(null);
+    setPortfolios([]);
+    setCheckedPortfolioIds(new Set());
     setTransactions([]);
     setSelectedAssets({});
     setHiddenAssets(new Set());
@@ -2073,6 +2190,111 @@ const App = () => {
           >
             {displayCurrency === 'USD' ? '$' : '€'}
           </button>
+          {/* Portfolio Switcher — only for signed-in users with multiple portfolios */}
+          {user && portfolios.length > 0 && (
+            <div className="relative ml-3">
+              <button
+                onClick={() => setPortfolioSwitcherOpen((v) => !v)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 transition-all text-xs font-bold"
+                title="Switch portfolio"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline max-w-[120px] truncate">{checkedPortfolioIds.size > 1 ? `${checkedPortfolioIds.size} portfolios` : portfolios.find((p) => p.id === portfolioId)?.name || 'Portfolio'}</span>
+                <ChevronDown className={`w-3 h-3 transition-transform ${portfolioSwitcherOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {portfolioSwitcherOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => { setPortfolioSwitcherOpen(false); setRenamingPortfolioId(null); }} />
+                  <div className="absolute left-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-700 p-3 z-50 space-y-1">
+                    {portfolios.map((p) => (
+                      <div key={p.id} className="group flex items-center gap-1">
+                        {renamingPortfolioId === p.id ? (
+                          <form
+                            className="flex-1 flex gap-1"
+                            onSubmit={(e) => { e.preventDefault(); handleRenamePortfolio(p.id, renamingPortfolioName); }}
+                          >
+                            <input
+                              autoFocus
+                              value={renamingPortfolioName}
+                              onChange={(e) => setRenamingPortfolioName(e.target.value)}
+                              className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 outline-none focus:ring-2 focus:ring-blue-500"
+                              onKeyDown={(e) => { if (e.key === 'Escape') { setRenamingPortfolioId(null); } }}
+                            />
+                            <button type="submit" className="p-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors">
+                              <Check className="w-3 h-3" />
+                            </button>
+                          </form>
+                        ) : (
+                          <>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); togglePortfolioCheck(p.id); }}
+                              className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                                checkedPortfolioIds.has(p.id)
+                                  ? 'bg-blue-500 border-blue-500 text-white'
+                                  : 'border-slate-300 dark:border-slate-600'
+                              }`}
+                              title={checkedPortfolioIds.has(p.id) ? 'Hide from view' : 'Show in view'}
+                            >
+                              {checkedPortfolioIds.has(p.id) && <Check className="w-2.5 h-2.5" />}
+                            </button>
+                            <button
+                              onClick={() => switchPortfolio(p.id)}
+                              className={`flex-1 flex items-center gap-2 px-2 py-2 rounded-xl text-xs font-bold transition-all text-left ${
+                                p.id === portfolioId
+                                  ? 'text-blue-600 dark:text-blue-400'
+                                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                              }`}
+                              title="Set as active portfolio"
+                            >
+                              {p.id === portfolioId && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 flex-shrink-0" />}
+                              <span className="truncate">{p.name}</span>
+                            </button>
+                            <button
+                              onClick={() => { setRenamingPortfolioId(p.id); setRenamingPortfolioName(p.name); }}
+                              className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 opacity-0 group-hover:opacity-100 transition-all"
+                              title="Rename"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            {portfolios.length > 1 && (
+                              <button
+                                onClick={() => handleDeletePortfolio(p.id)}
+                                className="p-1.5 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 opacity-0 group-hover:opacity-100 transition-all"
+                                title="Delete portfolio"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                    <div className="border-t border-slate-100 dark:border-slate-700 pt-1 mt-1">
+                      <form
+                        className="flex gap-1"
+                        onSubmit={(e) => { e.preventDefault(); handleCreatePortfolio(newPortfolioName); }}
+                      >
+                        <input
+                          value={newPortfolioName}
+                          onChange={(e) => setNewPortfolioName(e.target.value)}
+                          placeholder="New portfolio name…"
+                          className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-lg px-2 py-1.5 text-xs font-bold text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!newPortfolioName.trim()}
+                          className="p-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors disabled:opacity-30"
+                          title="Create portfolio"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </form>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <div className="ml-auto flex items-center gap-2">
           {supabase && (
             user ? (

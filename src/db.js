@@ -7,7 +7,7 @@
 
 /**
  * Ensure a profile and default portfolio exist for the user.
- * Returns { profile, portfolioId }.
+ * Returns { profile, portfolios } where portfolios is the full list.
  */
 export async function ensureProfile(supabase, userId) {
   // Upsert profile
@@ -18,18 +18,14 @@ export async function ensureProfile(supabase, userId) {
     .single();
   if (pErr) throw pErr;
 
-  // Get or create default portfolio (recheck after insert to handle races)
+  // Get all portfolios for user
   let { data: portfolios } = await supabase
     .from('portfolios')
-    .select('id')
+    .select('id, name, created_at')
     .eq('user_id', userId)
-    .order('created_at')
-    .limit(1);
+    .order('created_at');
 
-  let portfolioId;
-  if (portfolios && portfolios.length > 0) {
-    portfolioId = portfolios[0].id;
-  } else {
+  if (!portfolios || portfolios.length === 0) {
     const { error: nErr } = await supabase
       .from('portfolios')
       .insert({ user_id: userId, name: 'Default' });
@@ -37,49 +33,25 @@ export async function ensureProfile(supabase, userId) {
     // Re-fetch to get the winning row in case of a race
     const { data: refetch } = await supabase
       .from('portfolios')
-      .select('id')
+      .select('id, name, created_at')
       .eq('user_id', userId)
-      .order('created_at')
-      .limit(1);
-    portfolioId = refetch[0].id;
+      .order('created_at');
+    portfolios = refetch;
   }
 
-  return { profile, portfolioId };
+  return { profile, portfolios };
 }
 
 /**
- * Load all user data: profile + assets + transactions for the default portfolio.
+ * Load assets + transactions for a specific portfolio.
  */
-export async function loadUserData(supabase, userId) {
-  // Get profile
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
-  // Get default portfolio
-  const { data: portfolios } = await supabase
-    .from('portfolios')
-    .select('id, name')
-    .eq('user_id', userId)
-    .limit(1);
-
-  if (!portfolios || portfolios.length === 0) {
-    return { profile, portfolioId: null, assets: [], transactions: [] };
-  }
-
-  const portfolioId = portfolios[0].id;
-
-  // Load assets and transactions in parallel
+export async function loadPortfolioData(supabase, portfolioId) {
   const [assetsRes, txRes] = await Promise.all([
     supabase.from('assets').select('*').eq('portfolio_id', portfolioId),
     supabase.from('transactions').select('*').eq('portfolio_id', portfolioId).order('date'),
   ]);
 
   return {
-    profile,
-    portfolioId,
     assets: assetsRes.data || [],
     transactions: (txRes.data || []).map(dbTxToLocal),
   };
@@ -173,6 +145,34 @@ export function bulkInsertTransactions(supabase, portfolioId, txs) {
     .from('transactions')
     .insert(rows)
     .then(({ error }) => { if (error) console.error('bulkInsertTransactions error:', error); });
+}
+
+// ─── Portfolios ──────────────────────────────────────────────────────────────
+
+export async function createPortfolio(supabase, userId, name) {
+  const { data, error } = await supabase
+    .from('portfolios')
+    .insert({ user_id: userId, name })
+    .select('id, name, created_at')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export function renamePortfolio(supabase, portfolioId, name) {
+  supabase
+    .from('portfolios')
+    .update({ name, updated_at: new Date().toISOString() })
+    .eq('id', portfolioId)
+    .then(({ error }) => { if (error) console.error('renamePortfolio error:', error); });
+}
+
+export async function deletePortfolio(supabase, portfolioId) {
+  const { error } = await supabase
+    .from('portfolios')
+    .delete()
+    .eq('id', portfolioId);
+  if (error) throw error;
 }
 
 // ─── Profile ─────────────────────────────────────────────────────────────────
