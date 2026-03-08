@@ -1299,20 +1299,14 @@ const App = () => {
         });
         payload = { type: 'image', content: base64, mimeType: file.type, currentDate: TODAY };
       } else if (isPdf) {
-        // Extract text from all PDF pages via pdfjs (cheaper + more accurate than vision for text PDFs)
-        const pdfjs = await import('pdfjs-dist');
-        // Disable worker — run in main thread (universally compatible, fine for text extraction)
-        pdfjs.GlobalWorkerOptions.workerSrc = '';
-        const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-        const pageParts = [];
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const textContent = await page.getTextContent();
-          const pageText = textContent.items.map((item) => item.str).join(' ');
-          pageParts.push(pageText);
-        }
-        payload = { type: 'text', content: pageParts.join('\n\n'), currentDate: TODAY };
+        // Send raw PDF to edge function — server handles text extraction (no browser worker needed)
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (ev) => resolve(ev.target.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        payload = { type: 'pdf', content: base64, currentDate: TODAY };
       } else {
         // Fallback: read as text
         const text = await file.text();

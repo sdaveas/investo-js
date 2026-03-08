@@ -1,12 +1,13 @@
 // AI-powered statement parser for Investo
 // Extracts transactions from bank statements / brokerage exports / screenshots
 import "@supabase/functions-js/edge-runtime.d.ts"
+import { extractText } from 'npm:unpdf'
 
 const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY')
 
 interface ParseRequest {
-  type: 'text' | 'image'
-  content: string      // raw text OR base64-encoded image (no data: prefix)
+  type: 'text' | 'image' | 'pdf'
+  content: string      // raw text OR base64-encoded image/pdf (no data: prefix)
   mimeType?: string    // e.g. 'image/jpeg', 'image/png'
   currentDate: string
 }
@@ -79,15 +80,25 @@ Deno.serve(async (req) => {
       )
     }
 
+    // For PDF type: extract text server-side, then treat as text
+    let resolvedType = type
+    let resolvedContent = content
+    if (type === 'pdf') {
+      const pdfBytes = Uint8Array.from(atob(content), (c) => c.charCodeAt(0))
+      const { text } = await extractText(pdfBytes, { mergePages: true })
+      resolvedType = 'text'
+      resolvedContent = text
+    }
+
     const userMessage =
-      type === 'image'
+      resolvedType === 'image'
         ? {
             role: 'user',
             content: [
               {
                 type: 'image_url',
                 image_url: {
-                  url: `data:${mimeType || 'image/jpeg'};base64,${content}`,
+                  url: `data:${mimeType || 'image/jpeg'};base64,${resolvedContent}`,
                   detail: 'high',
                 },
               },
@@ -99,10 +110,10 @@ Deno.serve(async (req) => {
           }
         : {
             role: 'user',
-            content: `Today is ${currentDate}.\n\n${content}`,
+            content: `Today is ${currentDate}.\n\n${resolvedContent}`,
           }
 
-    const model = type === 'image' ? 'gpt-4o' : 'gpt-4o-mini'
+    const model = resolvedType === 'image' ? 'gpt-4o' : 'gpt-4o-mini'
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
