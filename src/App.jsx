@@ -14,13 +14,13 @@ import {
   ShoppingCart, HandCoins, Trash2, Pencil, Plus, Minus, Upload, Download, Sparkles, ShieldCheck,
   LogIn, LogOut, Cloud, Github, Heart, Moon, Sun, FileText, Menu, Coffee, RefreshCw,
   ChevronLeft, ChevronRight, Share2, Camera, Check, Link, ExternalLink, Maximize2, Minimize2,
-  Landmark, Eye, EyeOff, FolderOpen, ChevronDown,
+  Landmark, Eye, EyeOff, FolderOpen, ChevronDown, Key, Copy, Clock,
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { searchTickers, fetchPrices, fetchQuote, fetchIntradayPrices, fetchExchangeRates } from './api';
 import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
-import { ensureProfile, loadPortfolioData, upsertAsset, deleteAsset, insertTransaction, updateTransaction, moveTransaction, deleteTransaction, bulkInsertTransactions, updateProfile, createPortfolio, renamePortfolio, deletePortfolio as deletePortfolioDb } from './db';
+import { ensureProfile, loadPortfolioData, upsertAsset, deleteAsset, insertTransaction, updateTransaction, moveTransaction, deleteTransaction, bulkInsertTransactions, updateProfile, createPortfolio, renamePortfolio, deletePortfolio as deletePortfolioDb, createApiKey, listApiKeys, deleteApiKey } from './db';
 import { Analytics } from '@vercel/analytics/react';
 
 const COLORS = [
@@ -494,6 +494,13 @@ const App = () => {
   const [shareResult, setShareResult] = useState(null); // { url, blob }
   const [deletedTx, setDeletedTx] = useState(null); // For undo functionality
   const [undoTimer, setUndoTimer] = useState(null);
+
+  // --- API Keys ---
+  const [apiKeys, setApiKeys] = useState([]);
+  const [apiKeysOpen, setApiKeysOpen] = useState(false);
+  const [newKeyName, setNewKeyName] = useState('');
+  const [revealedKey, setRevealedKey] = useState(null); // shown once after generation
+  const [keyCopied, setKeyCopied] = useState(false);
 
   const chartRef = useRef(null);
   const statsRef = useRef(null);
@@ -2388,6 +2395,98 @@ Record your wealth. Stocks use real market data from Yahoo Finance.
                       </div>
                     </button>
                   </div>
+                  {user && (
+                  <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                    <button
+                      onClick={async () => {
+                        setApiKeysOpen((v) => !v);
+                        if (!apiKeysOpen && user) {
+                          try { setApiKeys(await listApiKeys(supabase, user.id)); } catch (e) { console.error(e); }
+                        }
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
+                    >
+                      <Key className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                      <div className="flex-1">
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">API Keys</p>
+                        <p className="text-[10px] text-slate-400 text-left">Programmatic access</p>
+                      </div>
+                      <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${apiKeysOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {apiKeysOpen && (
+                      <div className="space-y-2 pl-2">
+                        {revealedKey && (
+                          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-2.5 space-y-1.5">
+                            <p className="text-[10px] font-bold text-amber-700 dark:text-amber-400">Copy this key — it won't be shown again!</p>
+                            <div className="flex gap-1">
+                              <code className="flex-1 text-[10px] bg-white dark:bg-slate-800 rounded px-2 py-1.5 font-mono text-slate-700 dark:text-slate-300 break-all select-all">{revealedKey}</code>
+                              <button
+                                onClick={() => { navigator.clipboard.writeText(revealedKey); setKeyCopied(true); setTimeout(() => setKeyCopied(false), 2000); }}
+                                className="p-1.5 rounded-lg bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 transition-colors flex-shrink-0"
+                                title="Copy"
+                              >
+                                {keyCopied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {apiKeys.map((k) => (
+                          <div key={k.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-700/50 group">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] font-bold text-slate-600 dark:text-slate-300 truncate">{k.name}</p>
+                              <p className="text-[9px] text-slate-400 flex items-center gap-1">
+                                <Clock className="w-2.5 h-2.5" />
+                                {k.last_used_at ? `Used ${new Date(k.last_used_at).toLocaleDateString()}` : 'Never used'}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => { deleteApiKey(supabase, k.id); setApiKeys((prev) => prev.filter((x) => x.id !== k.id)); }}
+                              className="p-1 rounded-lg text-slate-300 dark:text-slate-600 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 opacity-0 group-hover:opacity-100 transition-all"
+                              title="Delete key"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                        <form
+                          className="flex gap-1"
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            if (!user) return;
+                            const name = newKeyName.trim() || 'Untitled';
+                            // Generate random key
+                            const bytes = new Uint8Array(32);
+                            crypto.getRandomValues(bytes);
+                            const raw = 'inv_' + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+                            // Hash with SubtleCrypto
+                            const hashBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
+                            const hash = Array.from(new Uint8Array(hashBuf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+                            try {
+                              const created = await createApiKey(supabase, user.id, name, hash);
+                              setApiKeys((prev) => [...prev, created]);
+                              setRevealedKey(raw);
+                              setNewKeyName('');
+                            } catch (err) { console.error('Failed to create API key:', err); }
+                          }}
+                        >
+                          <input
+                            value={newKeyName}
+                            onChange={(e) => setNewKeyName(e.target.value)}
+                            placeholder="Key name…"
+                            className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-lg px-2 py-1.5 text-[10px] font-bold text-slate-700 dark:text-slate-200 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <button
+                            type="submit"
+                            className="p-1.5 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition-colors text-[10px] font-bold px-2"
+                            title="Generate new API key"
+                          >
+                            Generate
+                          </button>
+                        </form>
+                      </div>
+                    )}
+                  </div>
+                  )}
                   <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-700">
                     <button
                       onClick={() => { setImportText(''); setModalMode('import'); setAboutOpen(false); }}

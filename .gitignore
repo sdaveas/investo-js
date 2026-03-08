@@ -3,3 +3,5 @@ dist
 .env
 supabase/.env.local
 TODO.md
+.vercel
+.env*.local

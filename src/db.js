@@ -184,6 +184,36 @@ export async function deletePortfolio(supabase, portfolioId) {
   if (error) throw error;
 }
 
+// ─── API Keys ────────────────────────────────────────────────────────────────
+
+export async function createApiKey(supabase, userId, name, keyHash) {
+  const { data, error } = await supabase
+    .from('api_keys')
+    .insert({ user_id: userId, name, key_hash: keyHash })
+    .select('id, name, created_at')
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function listApiKeys(supabase, userId) {
+  const { data, error } = await supabase
+    .from('api_keys')
+    .select('id, name, created_at, last_used_at')
+    .eq('user_id', userId)
+    .order('created_at');
+  if (error) throw error;
+  return data || [];
+}
+
+export function deleteApiKey(supabase, keyId) {
+  supabase
+    .from('api_keys')
+    .delete()
+    .eq('id', keyId)
+    .then(({ error }) => { if (error) console.error('deleteApiKey error:', error); });
+}
+
 // ─── Profile ─────────────────────────────────────────────────────────────────
 
 export function updateProfile(supabase, userId, fields) {
