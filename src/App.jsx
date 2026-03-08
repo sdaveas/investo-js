@@ -22,7 +22,6 @@ import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
 import { ensureProfile, loadPortfolioData, upsertAsset, deleteAsset, insertTransaction, updateTransaction, moveTransaction, deleteTransaction, bulkInsertTransactions, updateProfile, createPortfolio, renamePortfolio, deletePortfolio as deletePortfolioDb, createApiKey, listApiKeys, deleteApiKey } from './db';
 import { Analytics } from '@vercel/analytics/react';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 const COLORS = [
   '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b',
@@ -1302,7 +1301,8 @@ const App = () => {
       } else if (isPdf) {
         // Extract text from all PDF pages via pdfjs (cheaper + more accurate than vision for text PDFs)
         const pdfjs = await import('pdfjs-dist');
-        pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+        // Disable worker — run in main thread (universally compatible, fine for text extraction)
+        pdfjs.GlobalWorkerOptions.workerSrc = '';
         const arrayBuffer = await file.arrayBuffer();
         const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
         const pageParts = [];
@@ -4324,7 +4324,7 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
               {/* CSV textarea — only show when no AI rows */}
               {!aiImportRows && importAiStatus !== 'loading' && (
                 <>
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Or paste CSV / Google Sheets data</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Or paste CSV / TSV · PDF · PNG · JPG</p>
                   <textarea
                     value={importText}
                     onChange={(e) => setImportText(e.target.value)}
