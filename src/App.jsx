@@ -22,6 +22,7 @@ import { simulate, computeStats } from './simulation';
 import { supabase } from './supabase';
 import { ensureProfile, loadPortfolioData, upsertAsset, deleteAsset, insertTransaction, updateTransaction, moveTransaction, deleteTransaction, bulkInsertTransactions, updateProfile, createPortfolio, renamePortfolio, deletePortfolio as deletePortfolioDb, createApiKey, listApiKeys, deleteApiKey } from './db';
 import { Analytics } from '@vercel/analytics/react';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 const COLORS = [
   '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b',
@@ -463,6 +464,9 @@ const App = () => {
   const [editingTx, setEditingTx] = useState(null);           // tx being edited
   const [modalPortfolioId, setModalPortfolioId] = useState(null); // per-modal portfolio override
   const [importText, setImportText] = useState('');
+  const [aiImportRows, setAiImportRows] = useState(null);  // parsed rows from AI file import
+  const [importAiStatus, setImportAiStatus] = useState(null); // 'loading' | 'error:msg' | null
+  const [importConsolidate, setImportConsolidate] = useState(false); // merge all rows into one net transaction
   const [quickAddText, setQuickAddText] = useState('');
   const [quickAddStatus, setQuickAddStatus] = useState(null); // 'processing' | 'error:msg' | null
   const [quickAddPreview, setQuickAddPreview] = useState(null); // { ticker, name, type, amount, date }
@@ -704,6 +708,10 @@ const App = () => {
     setSellTicker(null);
     setEditingTx(null);
     setModalPortfolioId(null);
+    setImportText('');
+    setAiImportRows(null);
+    setImportAiStatus(null);
+    setImportConsolidate(false);
   }, []);
 
   // Resolve shares from a monetary amount: convert to native currency, divide by native price
@@ -1179,10 +1187,37 @@ const App = () => {
   const importParsed = useMemo(() => parseImportData(importText), [importText, parseImportData]);
 
   const confirmImport = useCallback(() => {
-    if (importParsed.length === 0) return;
+    const rows = aiImportRows ?? importParsed;
+    if (rows.length === 0) return;
+
+    // Consolidate mode: collapse all rows into a single net _CASH transaction
+    if (importConsolidate && aiImportRows?.length > 0) {
+      const net = rows.reduce((s, r) => s + (r.type === 'deposit' ? r.amount : -r.amount), 0);
+      const latestDate = rows.reduce((d, r) => (r.date > d ? r.date : d), rows[0].date);
+      const currency = rows[0].currency || displayCurrency;
+      const type = net >= 0 ? 'deposit' : 'withdraw';
+      const amount = Math.abs(net);
+      if (!selectedAssets[CASH_TICKER]) {
+        setSelectedAssets((prev) => ({ ...prev, [CASH_TICKER]: { name: 'Bank Account', color: '#6366f1' } }));
+      }
+      const tx = { id: genId(), ticker: CASH_TICKER, type, amount, date: latestDate, currency };
+      setTransactions((prev) => [...prev, tx]);
+      const pid = modalPortfolioId || portfolioId;
+      if (supabase && pid) {
+        upsertAsset(supabase, pid, { ticker: CASH_TICKER, name: 'Bank Account', color: '#6366f1' });
+        insertTransaction(supabase, pid, tx);
+      }
+      setImportText('');
+      setAiImportRows(null);
+      setImportAiStatus(null);
+      setImportConsolidate(false);
+      setModalMode(null);
+      return;
+    }
+
     const newAssets = { ...selectedAssets };
     const newTxs = [];
-    importParsed.forEach((row) => {
+    rows.forEach((row) => {
       if (!newAssets[row.ticker]) {
         const color = row.ticker === CASH_TICKER ? '#6366f1' : COLORS[colorIdx.current % COLORS.length];
         newAssets[row.ticker] = { name: row.name, color };
@@ -1219,8 +1254,11 @@ const App = () => {
       bulkInsertTransactions(supabase, pid, newTxs);
     }
     setImportText('');
+    setAiImportRows(null);
+    setImportAiStatus(null);
+    setImportConsolidate(false);
     setModalMode(null);
-  }, [importParsed, selectedAssets, displayCurrency, resolveShares, portfolioId, modalPortfolioId]);
+  }, [aiImportRows, importParsed, importConsolidate, selectedAssets, displayCurrency, resolveShares, portfolioId, modalPortfolioId]);
 
   const exportCSV = useCallback(() => {
     const headers = 'Date,Asset,Name,Action,Quantity,Currency';
@@ -1244,13 +1282,74 @@ const App = () => {
     URL.revokeObjectURL(url);
   }, [transactions, selectedAssets, assetCurrencies]);
 
+  const handleAiFileImport = useCallback(async (file) => {
+    setAiImportRows(null);
+    setImportAiStatus('loading');
+    try {
+      const isImage = file.type.startsWith('image/');
+      const isPdf = file.type === 'application/pdf';
+
+      let payload;
+      if (isImage) {
+        // Read image as base64
+        const base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (ev) => resolve(ev.target.result.split(',')[1]);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        payload = { type: 'image', content: base64, mimeType: file.type, currentDate: TODAY };
+      } else if (isPdf) {
+        // Extract text from all PDF pages via pdfjs (cheaper + more accurate than vision for text PDFs)
+        const pdfjs = await import('pdfjs-dist');
+        pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+        const pageParts = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const pageText = textContent.items.map((item) => item.str).join(' ');
+          pageParts.push(pageText);
+        }
+        payload = { type: 'text', content: pageParts.join('\n\n'), currentDate: TODAY };
+      } else {
+        // Fallback: read as text
+        const text = await file.text();
+        payload = { type: 'text', content: text, currentDate: TODAY };
+      }
+
+      const { data, error } = await supabase.functions.invoke('parse-statement', { body: payload });
+      if (error) throw new Error(error.message);
+      if (!data?.transactions?.length) throw new Error('No transactions found in this file');
+
+      setAiImportRows(data.transactions);
+      setImportAiStatus(null);
+    } catch (err) {
+      console.error('AI file import error:', err);
+      setImportAiStatus(`error:${err.message || 'Could not parse file'}`);
+    }
+  }, []);
+
   const handleImportFile = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const isAiFile = file.type.startsWith('image/') || file.type === 'application/pdf';
+    if (isAiFile) {
+      if (!user) {
+        setImportAiStatus('error:Sign in to use AI file import for PDFs and images');
+        return;
+      }
+      handleAiFileImport(file);
+      return;
+    }
+    // Plain text / CSV path
+    setAiImportRows(null);
+    setImportAiStatus(null);
     const reader = new FileReader();
     reader.onload = (ev) => setImportText(ev.target.result);
     reader.readAsText(file);
-  }, []);
+  }, [user, handleAiFileImport]);
 
   // ─── AI Insights ───────────────────────────────────────────────────────
 
@@ -4182,22 +4281,114 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
             </div>
 
             <div className="space-y-3">
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Upload CSV or paste from Google Sheets</p>
-              <label className="flex items-center justify-center gap-2 py-3 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-600 hover:border-blue-300 cursor-pointer transition-colors">
-                <Upload className="w-4 h-4 text-slate-400" />
-                <span className="text-sm font-bold text-slate-500 dark:text-slate-400">Choose CSV file</span>
-                <input type="file" accept=".csv,.tsv,.txt" onChange={handleImportFile} className="hidden" />
+              {/* Drop zone */}
+              <label
+                className="flex flex-col items-center justify-center gap-1.5 py-4 rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-600 hover:border-blue-300 cursor-pointer transition-colors"
+                onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-blue-400'); }}
+                onDragLeave={(e) => e.currentTarget.classList.remove('border-blue-400')}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.currentTarget.classList.remove('border-blue-400');
+                  const file = e.dataTransfer.files?.[0];
+                  if (file) handleImportFile({ target: { files: [file] } });
+                }}
+              >
+                <Upload className="w-5 h-5 text-slate-400" />
+                <span className="text-sm font-bold text-slate-500 dark:text-slate-400">Drop or choose a file</span>
+                <span className="text-[10px] text-slate-400">
+                  CSV / TSV · {user ? 'PDF · PNG · JPG' : <span className="text-amber-500">Sign in for PDF & image support</span>}
+                </span>
+                <input
+                  type="file"
+                  accept=".csv,.tsv,.txt,.pdf,.png,.jpg,.jpeg,.webp"
+                  onChange={handleImportFile}
+                  className="hidden"
+                />
               </label>
-              <textarea
-                value={importText}
-                onChange={(e) => setImportText(e.target.value)}
-                placeholder={`Date,Asset,Name,Action,Amount\n2020-01-01,GOOGL,Alphabet Inc,buy,10000\n2023-06-15,AAPL,Apple Inc,buy,5000`}
-                rows={6}
-                className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 px-4 text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none resize-none"
-              />
+
+              {/* AI loading */}
+              {importAiStatus === 'loading' && (
+                <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-blue-50 dark:bg-blue-950">
+                  <Loader2 className="w-4 h-4 text-blue-500 animate-spin flex-shrink-0" />
+                  <span className="text-xs font-bold text-blue-600">Analyzing file with AI…</span>
+                </div>
+              )}
+
+              {/* AI error */}
+              {importAiStatus?.startsWith('error:') && (
+                <p className="text-[10px] font-bold text-rose-500 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {importAiStatus.slice(6)}
+                </p>
+              )}
+
+              {/* CSV textarea — only show when no AI rows */}
+              {!aiImportRows && importAiStatus !== 'loading' && (
+                <>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Or paste CSV / Google Sheets data</p>
+                  <textarea
+                    value={importText}
+                    onChange={(e) => setImportText(e.target.value)}
+                    placeholder={`Date,Asset,Name,Action,Amount\n2020-01-01,GOOGL,Alphabet Inc,buy,10000\n2023-06-15,AAPL,Apple Inc,buy,5000`}
+                    rows={5}
+                    className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl py-3 px-4 text-xs font-mono focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+                  />
+                </>
+              )}
             </div>
 
-            {importParsed.length > 0 && (
+            {/* AI-parsed rows preview */}
+            {aiImportRows?.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">{aiImportRows.length} transaction{aiImportRows.length !== 1 ? 's' : ''} found</p>
+                  <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                    <Sparkles className="w-2.5 h-2.5" /> AI
+                  </span>
+                <button onClick={() => { setAiImportRows(null); setImportAiStatus(null); setImportConsolidate(false); }} className="ml-auto text-[9px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                    Clear
+                  </button>
+                </div>
+                {/* Consolidate toggle — only for all-cash AI rows */}
+                {aiImportRows.every(r => r.ticker === CASH_TICKER) && aiImportRows.length >= 2 && (() => {
+                  const net = aiImportRows.reduce((s, r) => s + (r.type === 'deposit' ? r.amount : -r.amount), 0);
+                  return (
+                    <button
+                      onClick={() => setImportConsolidate(v => !v)}
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold border-2 transition-colors ${
+                        importConsolidate
+                          ? 'border-blue-400 bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
+                          : 'border-slate-200 dark:border-slate-600 text-slate-500 hover:border-blue-300'
+                      }`}
+                    >
+                      <span>Consolidate into one transaction</span>
+                      <span className={`font-black ${ net >= 0 ? 'text-indigo-600' : 'text-amber-600' }`}>
+                        {net >= 0 ? '+' : ''}{formatCurrency(net)}
+                      </span>
+                    </button>
+                  );
+                })()}
+                {!importConsolidate && (
+                <div className="max-h-40 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                  {aiImportRows.map((row, i) => (
+                    <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold ${
+                      row.type === 'buy' ? 'bg-emerald-50 dark:bg-emerald-950 text-emerald-700'
+                      : row.type === 'deposit' ? 'bg-indigo-50 dark:bg-indigo-950 text-indigo-700'
+                      : row.type === 'withdraw' ? 'bg-amber-50 dark:bg-amber-950 text-amber-700'
+                      : 'bg-rose-50 dark:bg-rose-950 text-rose-700'
+                    }`}>
+                      <span className="uppercase text-[10px] font-black w-8">{row.type}</span>
+                      <span className="flex-1 truncate">{row.name} ({displayTicker(row.ticker)})</span>
+                      <span>{row.isShares ? `${row.amount} shares` : formatCurrency(row.amount)}</span>
+                      <span className="text-slate-400 text-[10px]">{row.date}</span>
+                    </div>
+                  ))}
+                </div>
+                )}
+              </div>
+            )}
+
+            {/* CSV-parsed rows preview */}
+            {!aiImportRows && importParsed.length > 0 && (
               <div className="space-y-2">
                 <p className="text-[10px] font-black uppercase tracking-widest text-emerald-600">{importParsed.length} transaction{importParsed.length !== 1 ? 's' : ''} found</p>
                 <div className="max-h-40 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
@@ -4217,7 +4408,7 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
                 </div>
               </div>
             )}
-            {importText.trim() && importParsed.length === 0 && (
+            {!aiImportRows && importText.trim() && importParsed.length === 0 && (
               <p className="text-[10px] font-bold text-rose-500 flex items-center gap-1">
                 <AlertCircle className="w-3 h-3" /> No valid transactions found. Expected: Date, Asset, Action, Amount
               </p>
@@ -4225,9 +4416,12 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
 
             <div className="flex gap-3 pt-2">
               <button onClick={closeModal} className="flex-1 py-3 rounded-2xl font-bold text-slate-500 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all">Cancel</button>
-              <button onClick={confirmImport} disabled={importParsed.length === 0}
-                className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95">
-                Import {importParsed.length > 0 ? `(${importParsed.length})` : ''}
+              <button
+                onClick={confirmImport}
+                disabled={(aiImportRows ?? importParsed).length === 0}
+                className="flex-1 py-3 rounded-2xl font-bold text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 shadow-lg transition-all active:scale-95"
+              >
+                Import {(aiImportRows ?? importParsed).length > 0 ? `(${(aiImportRows ?? importParsed).length})` : ''}
               </button>
             </div>
           </div>

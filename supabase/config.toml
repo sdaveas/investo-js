@@ -401,3 +401,9 @@ entrypoint = "./functions/parse-transaction/index.ts"
 [functions.generate-insights]
 enabled = true
 verify_jwt = false
+
+[functions.parse-statement]
+enabled = true
+verify_jwt = false
+import_map = "./functions/parse-statement/deno.json"
+entrypoint = "./functions/parse-statement/index.ts"
