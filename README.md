@@ -98,6 +98,10 @@ npx supabase functions deploy generate-insights
 
 See [supabase/functions/README.md](supabase/functions/README.md) for detailed setup instructions.
 
+## API
+
+Investo exposes a REST API for managing portfolios and transactions programmatically. See the full [API Reference](API.md).
+
 ## Deployment
 
 Deployed on [Vercel](https://vercel.com). The `vercel.json` config proxies Yahoo Finance API requests to avoid CORS issues in production.
