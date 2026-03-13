@@ -1755,7 +1755,7 @@ const App = () => {
         const u = session.user;
         setUser({
           id: u.id, email: u.email,
-          name: u.user_metadata?.full_name || u.email,
+          name: (u.user_metadata?.full_name || u.email).split(' ')[0],
           avatar: u.user_metadata?.avatar_url,
         });
         // Defer async DB work outside the callback to prevent deadlock
@@ -2304,26 +2304,20 @@ const App = () => {
 
         {/* Menu */}
         <div className="sticky top-0 z-30 bg-slate-50/95 dark:bg-slate-950/95 backdrop-blur-sm -mx-4 md:-mx-8 px-4 md:px-8 py-3">
-        <div className="flex items-center">
+        <div className="flex items-center gap-2">
           <button
             onClick={() => { setModalPortfolioId(portfolioId); setAddTxOpen(true); }}
-            className={`px-4 py-2 rounded-2xl font-bold transition-all flex items-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white text-sm${transactions.length === 0 ? ' animate-[pulse-ring_2s_ease-in-out_infinite]' : ''}`}
+            className={`h-10 w-10 sm:w-auto sm:px-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white${transactions.length === 0 ? ' animate-[pulse-ring_2s_ease-in-out_infinite]' : ''}`}
           >
-            New Transaction
-          </button>
-          <button
-            onClick={toggleCurrency}
-            className={`ml-3 px-3 py-2 rounded-2xl font-black text-sm transition-all active:scale-95 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300${transactions.length === 0 ? ' animate-[pulse-ring_2s_ease-in-out_infinite]' : ''}`}
-            title={`Display in ${displayCurrency === 'USD' ? 'EUR' : 'USD'}`}
-          >
-            {displayCurrency === 'USD' ? '$' : '€'}
+            <Plus className="w-4 h-4" />
+            <span className="hidden sm:inline text-sm">New Transaction</span>
           </button>
           {/* Portfolio Switcher — only for signed-in users with multiple portfolios */}
           {user && portfolios.length > 0 && (
-            <div className="relative ml-3">
+            <div className="relative">
               <button
                 onClick={() => setPortfolioSwitcherOpen((v) => !v)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 transition-all text-xs font-bold"
+                className="h-10 flex items-center gap-1.5 px-3 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 transition-all text-xs font-bold"
                 title="Switch portfolio"
               >
                 <FolderOpen className="w-3.5 h-3.5" />
@@ -2421,28 +2415,24 @@ const App = () => {
           <div className="ml-auto flex items-center gap-2">
           {supabase && (
             user ? (
-              <div className="flex items-center gap-1.5">
-                <div className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-slate-100 dark:bg-slate-700">
-                  {user.avatar ? (
-                    <img src={user.avatar} alt="" className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />
-                  ) : (
-                    <Cloud className="w-4 h-4 text-slate-500" />
-                  )}
-                  <span className="text-xs font-bold text-slate-600 dark:text-slate-300 hidden sm:inline">{user.name || user.email}</span>
-                </div>
-                <button
-                  onClick={signOut}
-                  disabled={isSigningOut}
-                  className="p-2 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-rose-100 dark:hover:bg-rose-900/30 text-slate-400 hover:text-rose-500 transition-all disabled:opacity-50"
-                  title="Sign out"
-                >
-                  {isSigningOut ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5" />}
-                </button>
-              </div>
+              <button
+                onClick={signOut}
+                disabled={isSigningOut}
+                className="h-10 flex items-center gap-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all disabled:opacity-50 group"
+                title="Sign out"
+              >
+                {user.avatar ? (
+                  <img src={user.avatar} alt="" className="w-5 h-5 rounded-full" referrerPolicy="no-referrer" />
+                ) : (
+                  <Cloud className="w-4 h-4 text-slate-500" />
+                )}
+                <span className="text-xs font-bold text-slate-600 dark:text-slate-300 hidden sm:inline max-w-[100px] truncate">{user.name || user.email}</span>
+                {isSigningOut ? <RefreshCw className="w-4 h-4 text-slate-400 animate-spin" /> : <LogOut className="w-4 h-4 text-slate-400 group-hover:text-rose-500 transition-colors" />}
+              </button>
             ) : (
               <button
                 onClick={signInWithGoogle}
-                className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all"
+                className="h-10 flex items-center gap-2 px-3 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 transition-all"
                 title="Sign in"
               >
                 <LogIn className="w-4 h-4 text-slate-500" />
@@ -2453,10 +2443,10 @@ const App = () => {
           <div className="relative flex">
             <button
               onClick={() => setAboutOpen((v) => !v)}
-              className="px-3 py-2 rounded-2xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 transition-all flex items-center"
+              className="h-10 w-10 rounded-xl bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-500 transition-all flex items-center justify-center"
               title="Menu"
             >
-              <Menu className="w-5 h-5" />
+              <Menu className="w-4 h-4" />
             </button>
             {aboutOpen && (
               <>
@@ -2477,6 +2467,27 @@ const App = () => {
 Record your wealth. Stocks use real market data from Yahoo Finance.
                   </p>
                   <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-700">
+                    <div className="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-700">
+                      <Landmark className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                      <div className="flex-1">
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-200 text-left">Currency</p>
+                        <p className="text-[10px] text-slate-400 text-left">Display values in</p>
+                      </div>
+                      <div className="flex bg-slate-200 dark:bg-slate-600 rounded-lg p-0.5">
+                        <button
+                          onClick={() => { const next = 'USD'; setDisplayCurrency(next); _displayCurrency = next; localStorage.setItem('investo-currency', next); if (supabase && user) updateProfile(supabase, user.id, { display_currency: next }); }}
+                          className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all ${displayCurrency === 'USD' ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                        >
+                          $ USD
+                        </button>
+                        <button
+                          onClick={() => { const next = 'EUR'; setDisplayCurrency(next); _displayCurrency = next; localStorage.setItem('investo-currency', next); if (supabase && user) updateProfile(supabase, user.id, { display_currency: next }); }}
+                          className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all ${displayCurrency === 'EUR' ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'}`}
+                        >
+                          € EUR
+                        </button>
+                      </div>
+                    </div>
                     <button
                       onClick={() => { toggleDark(); setAboutOpen(false); }}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 transition-colors"
@@ -3530,10 +3541,13 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
                         const isCash = stat.ticker === CASH_TICKER;
                         const ytdPct = ytdMap[stat.ticker] ?? null;
                         const _prices = livePriceCache?.[stat.ticker];
-                        const currentPrice = _prices?.[_prices.length - 1]?.price;
-                        const prevClose = _prices?.length >= 2 ? _prices[_prices.length - 2]?.price : null;
+                        const rawPrice = _prices?.[_prices.length - 1]?.price;
+                        const rawPrev = _prices?.length >= 2 ? _prices[_prices.length - 2]?.price : null;
+                        const latestDate = _prices?.[_prices.length - 1]?.date || TODAY;
+                        const fxRate = getConversionRate(assetCurrencies[stat.ticker] || 'USD', latestDate);
+                        const currentPrice = rawPrice != null ? rawPrice * fxRate : null;
+                        const prevClose = rawPrev != null ? rawPrev * fxRate : null;
                         const priceUp = prevClose != null && currentPrice != null ? currentPrice >= prevClose : true;
-                        const priceSym = getCurrencySymbol(assetCurrencies[stat.ticker] || 'USD');
                         return (
                         <div key={idx} className={`p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm transition-all hover:translate-y-[-4px] ${hiddenAssets.has(stat.ticker) ? 'opacity-50' : ''}`}>
                           <div className="flex justify-between items-center mb-4 gap-2">
@@ -3541,7 +3555,7 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
                               {displayTicker(stat.ticker)}
                             </div>
                             {!isCash && currentPrice != null && (
-                              <span className={`text-xs font-black shrink-0 whitespace-nowrap ${priceUp ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{priceSym}{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                              <span className={`text-xs font-black shrink-0 whitespace-nowrap ${priceUp ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{getCurrencySymbol(displayCurrency)}{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                             )}
                           </div>
                           <h4 className="text-xs font-bold mb-1 truncate text-slate-500 dark:text-slate-400">
