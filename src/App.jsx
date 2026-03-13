@@ -3529,29 +3529,33 @@ labelFormatter={(l) => new Date(l).toLocaleDateString('en-US', { year: 'numeric'
                       {assets.map((stat, idx) => {
                         const isCash = stat.ticker === CASH_TICKER;
                         const ytdPct = ytdMap[stat.ticker] ?? null;
+                        const _prices = livePriceCache?.[stat.ticker];
+                        const currentPrice = _prices?.[_prices.length - 1]?.price;
+                        const prevClose = _prices?.length >= 2 ? _prices[_prices.length - 2]?.price : null;
+                        const priceUp = prevClose != null && currentPrice != null ? currentPrice >= prevClose : true;
+                        const priceSym = getCurrencySymbol(assetCurrencies[stat.ticker] || 'USD');
                         return (
                         <div key={idx} className={`p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm transition-all hover:translate-y-[-4px] ${hiddenAssets.has(stat.ticker) ? 'opacity-50' : ''}`}>
                           <div className="flex justify-between items-center mb-4 gap-2">
                             <div className="px-2 py-1 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 truncate min-w-0">
-                            {displayTicker(stat.ticker)}
+                              {displayTicker(stat.ticker)}
                             </div>
-                            {ytdPct != null ? (
-                              <div className={`flex items-center gap-1 text-xs font-black shrink-0 whitespace-nowrap ${ytdPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                                {ytdPct >= 0 ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
-                                {formatPercent(Math.abs(ytdPct))} YTD
-                              </div>
-                            ) : null}
+                            {!isCash && currentPrice != null && (
+                              <span className={`text-xs font-black shrink-0 whitespace-nowrap ${priceUp ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{priceSym}{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            )}
                           </div>
                           <h4 className="text-xs font-bold mb-1 truncate text-slate-500 dark:text-slate-400">
-                            {isCash ? 'Bank Account' : `${stat.name} · ${formatCurrency(stat.totalDeposits)}`}
+                            {isCash ? 'Bank Account' : stat.name}
                           </h4>
                           <p className="text-2xl font-black tracking-tight">{formatCurrency(stat.finalValue)}</p>
                           {!isCash && (
                             <div className="mt-2 flex flex-wrap gap-3 text-[10px] font-bold">
                               {currentShares[stat.ticker] != null && (
-                                <span className="text-blue-500 dark:text-blue-400">{currentShares[stat.ticker] < 1 ? currentShares[stat.ticker].toFixed(4) : currentShares[stat.ticker].toFixed(2)} shares</span>
+                              <span className="text-blue-500 dark:text-blue-400">{currentShares[stat.ticker] < 1 ? currentShares[stat.ticker].toFixed(4) : currentShares[stat.ticker].toFixed(2)} shares</span>
                               )}
-                              <span className="text-slate-500 dark:text-slate-400">Ann. {formatPercent(stat.annualizedReturn)}</span>
+                              {ytdPct != null && (
+                                <span className={`${ytdPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>{ytdPct >= 0 ? '+' : ''}{formatPercent(ytdPct)} YTD</span>
+                              )}
                             </div>
                           )}
                         </div>
