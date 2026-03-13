@@ -2307,9 +2307,9 @@ const App = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setModalPortfolioId(portfolioId); setAddTxOpen(true); }}
-            className={`h-10 w-10 sm:w-auto sm:px-4 rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white${transactions.length === 0 ? ' animate-[pulse-ring_2s_ease-in-out_infinite]' : ''}`}
+            className={`h-10 w-10 sm:w-auto sm:px-4 rounded-xl font-bold transition-all flex items-center justify-center sm:justify-start gap-2 shadow-lg active:scale-95 bg-blue-600 hover:bg-blue-700 text-white${transactions.length === 0 ? ' animate-[pulse-ring_2s_ease-in-out_infinite]' : ''}`}
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4 sm:hidden" />
             <span className="hidden sm:inline text-sm">New Transaction</span>
           </button>
           {/* Portfolio Switcher — only for signed-in users with multiple portfolios */}
